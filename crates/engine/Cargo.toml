@@ -18,5 +18,8 @@ web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
 png = "0.18"
 pollster = "0.4"
 
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
+
 [lints]
 workspace = true

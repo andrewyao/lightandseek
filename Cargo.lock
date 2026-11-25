@@ -180,6 +180,7 @@ version = "0.0.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "naga",
  "png",
  "pollster",
  "web-sys",
