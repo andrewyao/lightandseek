@@ -7,6 +7,16 @@ license.workspace = true
 publish = false
 
 [dependencies]
+wgpu = { version = "30", features = ["webgl"] }
+glam = "0.34"
+bytemuck = { version = "1", features = ["derive"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+png = "0.18"
+pollster = "0.4"
 
 [lints]
 workspace = true
