@@ -1,0 +1,17 @@
+# Every gate a commit must pass.
+check: test clippy wasm web
+
+test:
+    cargo test --workspace
+
+clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
+
+wasm:
+    cargo check -p game -p engine -p client --target wasm32-unknown-unknown
+
+web:
+    cd crates/client && trunk build
+
+serve:
+    cd crates/client && trunk build --release && cd ../.. && cargo run -p server
