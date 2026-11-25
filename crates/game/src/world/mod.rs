@@ -11,7 +11,7 @@ mod park;
 
 use serde::{Deserialize, Serialize};
 
-use crate::geom::{Aabb2, Footprint, Vec2, Vec3, finite};
+use crate::geom::{Aabb2, Footprint, Vec2, Vec3, clip, finite};
 use crate::model::SceneKind;
 use crate::rng::Rng;
 use nav::NavGrid;
@@ -77,12 +77,31 @@ impl World {
         generate_counted(kind, seed).0
     }
 
-    /// Whether a ray at height `y` from `a` to `b` reaches `b`.
-    pub fn ray_clear(&self, a: Vec2, b: Vec2, y: f32) -> bool {
-        !self
+    /// Distance from `from` along the segment to `to` where it first enters a
+    /// solid, each solid being its footprint extruded from y = 0 to its
+    /// height. `Some(0.0)` when `from` starts inside one. Grazing a surface
+    /// is not a hit. The follow camera pulls in to this.
+    pub fn ray_hit(&self, from: Vec3, to: Vec3) -> Option<f32> {
+        let d = Vec3::new(to.x - from.x, to.y - from.y, to.z - from.z);
+        let (p, flat) = (Vec2::new(from.x, from.z), Vec2::new(d.x, d.z));
+        let nearest = self
             .solids
             .iter()
-            .any(|s| s.height > y && s.shape.hits_segment(a, b))
+            .filter_map(|s| {
+                let span = s.shape.line_span(p, flat)?;
+                let span = clip(span, from.y, d.y, 0.0, s.height)?;
+                let span = (span.0.max(0.0), span.1.min(1.0));
+                (span.0 < span.1).then_some(span.0)
+            })
+            .min_by(f32::total_cmp)?;
+        Some(nearest * (d.x * d.x + d.y * d.y + d.z * d.z).sqrt())
+    }
+
+    /// Whether a level ray at height `y` from `a` reaches `b`. Solids no
+    /// taller than `y` do not block.
+    pub fn ray_clear(&self, a: Vec2, b: Vec2, y: f32) -> bool {
+        self.ray_hit(Vec3::new(a.x, y, a.y), Vec3::new(b.x, y, b.y))
+            .is_none()
     }
 }
 

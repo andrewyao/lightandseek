@@ -235,48 +235,39 @@ impl Footprint {
         }
     }
 
-    /// Whether the segment `a..b` passes through the footprint's interior.
-    pub fn hits_segment(&self, a: Vec2, b: Vec2) -> bool {
+    /// The parameter range `(enter, exit)` over which the line `p + d * t`
+    /// is strictly inside the footprint, or `None` if it misses or grazes.
+    pub(crate) fn line_span(&self, p: Vec2, d: Vec2) -> Option<(f32, f32)> {
         match *self {
-            Footprint::Aabb(bx) => segment_hits_aabb(a, b, &bx),
+            Footprint::Aabb(b) => {
+                let all = (f32::NEG_INFINITY, f32::INFINITY);
+                let span = clip(all, p.x, d.x, b.min.x, b.max.x)?;
+                clip(span, p.y, d.y, b.min.y, b.max.y)
+            }
             Footprint::Circle { center, radius } => {
-                let ab = b - a;
-                let len2 = ab.dot(ab);
-                let t = if len2 > 0.0 {
-                    ((center - a).dot(ab) / len2).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                (a + ab * t).distance(center) < radius
+                let m = p - center;
+                let (a, b, c) = (d.dot(d), 2.0 * m.dot(d), m.dot(m) - radius * radius);
+                if a == 0.0 {
+                    return (c < 0.0).then_some((f32::NEG_INFINITY, f32::INFINITY));
+                }
+                let disc = b * b - 4.0 * a * c;
+                if disc <= 0.0 {
+                    return None;
+                }
+                let root = disc.sqrt();
+                Some(((-b - root) / (2.0 * a), (-b + root) / (2.0 * a)))
             }
         }
     }
 }
 
-/// Slab test.
-fn segment_hits_aabb(a: Vec2, b: Vec2, bx: &Aabb2) -> bool {
-    let d = b - a;
-    let mut t0: f32 = 0.0;
-    let mut t1: f32 = 1.0;
-    for (p, dir, lo, hi) in [
-        (a.x, d.x, bx.min.x, bx.max.x),
-        (a.y, d.y, bx.min.y, bx.max.y),
-    ] {
-        if dir == 0.0 {
-            if p <= lo || p >= hi {
-                return false;
-            }
-        } else {
-            let (mut n, mut f) = ((lo - p) / dir, (hi - p) / dir);
-            if n > f {
-                std::mem::swap(&mut n, &mut f);
-            }
-            t0 = t0.max(n);
-            t1 = t1.min(f);
-            if t0 >= t1 {
-                return false;
-            }
-        }
+/// Narrows `span` to where `p + d * t` lies strictly inside `lo..hi`.
+pub(crate) fn clip(span: (f32, f32), p: f32, d: f32, lo: f32, hi: f32) -> Option<(f32, f32)> {
+    if d == 0.0 {
+        return (p > lo && p < hi).then_some(span);
     }
-    true
+    let (a, b) = ((lo - p) / d, (hi - p) / d);
+    let (n, f) = if a < b { (a, b) } else { (b, a) };
+    let span = (span.0.max(n), span.1.min(f));
+    (span.0 < span.1).then_some(span)
 }

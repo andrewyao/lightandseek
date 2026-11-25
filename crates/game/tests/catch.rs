@@ -1,6 +1,52 @@
 use game::geom::{facing, yaw_toward};
 use game::rules::can_catch;
-use game::{Aabb2, Body, Footprint, SceneKind, Solid, Vec2, World};
+use game::{Aabb2, Body, Footprint, SceneKind, Solid, Vec2, Vec3, World};
+
+#[test]
+fn ray_hit_reports_distance_to_the_first_solid_respecting_heights() {
+    let mut world = wall(2.0);
+    world.solids.push(Solid {
+        shape: Footprint::Circle {
+            center: Vec2::new(0.0, 5.0),
+            radius: 1.0,
+        },
+        height: 3.0,
+    });
+    let at = Vec3::new;
+    let hit = world
+        .ray_hit(at(0.0, 1.0, -2.0), at(0.0, 1.0, 10.0))
+        .unwrap();
+    assert!((hit - 2.6).abs() < 1e-5, "the wall face at z = 0.6: {hit}");
+    let hit = world
+        .ray_hit(at(0.0, 2.5, -2.0), at(0.0, 2.5, 10.0))
+        .unwrap();
+    assert!(
+        (hit - 6.0).abs() < 1e-5,
+        "over the wall, into the pillar at z = 4: {hit}"
+    );
+    assert_eq!(
+        world.ray_hit(at(0.0, 3.5, -2.0), at(0.0, 3.5, 10.0)),
+        None,
+        "over both"
+    );
+    let down = world
+        .ray_hit(at(0.0, 4.0, 0.75), at(0.0, -1.0, 0.75))
+        .unwrap();
+    assert!(
+        (down - 2.0).abs() < 1e-5,
+        "straight down onto the wall top: {down}"
+    );
+    assert_eq!(
+        world.ray_hit(at(0.0, 1.0, 0.75), at(0.0, 1.0, 3.0)),
+        Some(0.0),
+        "starts inside"
+    );
+    assert_eq!(
+        world.ray_hit(at(0.0, 1.0, -2.0), at(0.0, 1.0, 0.0)),
+        None,
+        "stops short"
+    );
+}
 
 fn wall(height: f32) -> World {
     let mut world = World::open(SceneKind::City);
