@@ -128,6 +128,6 @@ fn vs_wedge(
 @fragment
 fn fs_wedge(in: Fan) -> @location(0) vec4<f32> {
     // Stronger toward the rim, so the reach reads at a glance.
-    let alpha = in.color.a * mix(0.5, 1.0, in.r * in.r);
+    let alpha = in.color.a * mix(0.8, 1.0, in.r * in.r);
     return vec4<f32>(finish(in.color.rgb, in.world), alpha);
 }

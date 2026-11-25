@@ -187,6 +187,18 @@ mod tests {
     }
 
     #[test]
+    fn how_far_away_the_target_is_does_not_change_the_view() {
+        let eye = Vec3::new(3.0, 2.0, 5.0);
+        let d = Vec3::new(-0.4, -0.3, -1.0);
+        let near = View::look(eye, eye + d, 1.6);
+        let far = View::look(eye, eye + 4.0 * d, 1.6);
+        assert!(near.view.abs_diff_eq(far.view, 1e-5));
+        // A view matrix is a rotation and a translation: no scale.
+        let x = near.view.transform_vector3(Vec3::X);
+        assert!((x.length() - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
     fn nearer_points_get_greater_depth() {
         let v = OrbitCamera::new(Vec3::ZERO).view(1.0);
         let depth = |p: Vec3| {

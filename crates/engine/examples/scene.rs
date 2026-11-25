@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         yaw: seeker.1,
         half_angle: FRAC_PI_6,
         radius: 2.0,
-        color: [1.0, 0.08, 0.05, 0.6],
+        color: [0.95, 0.05, 0.05, 0.8],
     }];
 
     let mut off = Offscreen::new(SIZE)?;
