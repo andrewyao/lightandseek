@@ -29,7 +29,7 @@ impl View {
     pub fn look_to(eye: Vec3, dir: Vec3, aspect: f32) -> View {
         View {
             eye,
-            view: glam::camera::rh::view::look_to_mat4(eye, dir, Vec3::Y),
+            view: glam::camera::rh::view::look_to_mat4(eye, dir.normalize(), Vec3::Y),
             proj: directx::perspective_infinite_reverse(FOV_Y, aspect.max(1e-3), NEAR),
         }
     }
