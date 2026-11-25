@@ -1,0 +1,194 @@
+//! The byte format. Everything here except `Frame` and `WireError` is private.
+//!
+//! `Room` and `Replica` take bytes and return `Frame`s, so neither shell
+//! names a message and postcard stays changeable in this file.
+//!
+//! Layout: byte 0 is `VERSION`, the rest is postcard. Decode rejects another
+//! version, trailing bytes, and non-finite floats (via `geom`'s leaf types).
+//!
+//! WIRE STABILITY: enum variants and struct fields are append-only.
+
+use serde::{Deserialize, Serialize};
+
+use crate::model::{AvatarState, Input, LobbyConfig, Member, Phase, PlayerId, Refusal, Role, Tick};
+use crate::world::World;
+
+pub(crate) const VERSION: u8 = 1;
+
+/// One WebSocket binary message. Opaque to shells.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Frame(pub(crate) Vec<u8>);
+
+impl Frame {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WireError {
+    Version {
+        got: u8,
+    },
+    Malformed,
+    /// A well-formed message that is not valid at this point in the protocol.
+    Unexpected,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) enum ClientMsg {
+    /// First frame on every socket. `resume` is the id a reloaded client held.
+    Hello {
+        name: String,
+        resume: Option<PlayerId>,
+    },
+    Configure(LobbyConfig),
+    Start,
+    Input(Input),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) enum ServerMsg {
+    /// First frame on every socket.
+    Welcome {
+        you: PlayerId,
+        host: Option<PlayerId>,
+        config: LobbyConfig,
+        roster: Vec<Member>,
+    },
+    /// The host, config, or roster changed. Sent in any phase.
+    Roster {
+        host: Option<PlayerId>,
+        config: LobbyConfig,
+        roster: Vec<Member>,
+    },
+    /// Also sent to anyone who joins while the round runs.
+    RoundStart {
+        world: World,
+        seeker: PlayerId,
+        roster: Vec<Member>,
+    },
+    /// Every tick during a round. Filtered per recipient: while hiding, the
+    /// seeker gets no hiders. `ack` is the last `Input::tick` consumed for the
+    /// recipient's avatar.
+    Snapshot {
+        tick: Tick,
+        phase: Phase,
+        ack: Tick,
+        avatars: Vec<AvatarState>,
+    },
+    Caught {
+        hider: PlayerId,
+        by: PlayerId,
+    },
+    RoundEnd {
+        winner: Role,
+    },
+    Refused(Refusal),
+}
+
+pub(crate) fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
+    let mut out = vec![VERSION];
+    out.extend(postcard::to_allocvec(msg).expect("in-memory encode cannot fail"));
+    out
+}
+
+pub(crate) fn frame<T: Serialize>(msg: &T) -> Frame {
+    Frame(encode(msg))
+}
+
+pub(crate) fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, WireError> {
+    let (&version, body) = bytes.split_first().ok_or(WireError::Malformed)?;
+    if version != VERSION {
+        return Err(WireError::Version { got: version });
+    }
+    match postcard::take_from_bytes(body) {
+        Ok((msg, [])) => Ok(msg),
+        _ => Err(WireError::Malformed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geom::Vec2;
+    use crate::model::SceneKind;
+
+    fn round_start(world: World) -> ServerMsg {
+        ServerMsg::RoundStart {
+            world,
+            seeker: PlayerId(3),
+            roster: Vec::new(),
+        }
+    }
+
+    fn input(mv: Vec2, yaw: f32) -> ClientMsg {
+        ClientMsg::Input(Input {
+            tick: Tick(9),
+            mv,
+            yaw,
+        })
+    }
+
+    #[test]
+    fn a_generated_world_round_trips() {
+        for kind in SceneKind::ALL {
+            let world = World::generate(kind, 42);
+            let bytes = encode(&round_start(world.clone()));
+            let Ok(ServerMsg::RoundStart { world: back, .. }) = decode(&bytes) else {
+                panic!("{kind:?} did not decode");
+            };
+            assert_eq!(back, world);
+        }
+    }
+
+    #[test]
+    fn decode_rejects_non_finite_floats_in_inputs_and_worlds() {
+        let ok = encode(&input(Vec2::new(1.0, 0.0), 0.5));
+        assert!(decode::<ClientMsg>(&ok).is_ok());
+        for bad in [
+            input(Vec2::new(f32::NAN, 0.0), 0.0),
+            input(Vec2::new(0.0, f32::INFINITY), 0.0),
+            input(Vec2::ZERO, f32::NAN),
+            input(Vec2::ZERO, f32::NEG_INFINITY),
+        ] {
+            assert_eq!(
+                decode::<ClientMsg>(&encode(&bad)).err(),
+                Some(WireError::Malformed),
+                "{bad:?}"
+            );
+        }
+
+        let mut world = World::generate(SceneKind::Park, 1);
+        world.solids[3].height = f32::NAN;
+        assert_eq!(
+            decode::<ServerMsg>(&encode(&round_start(world))).err(),
+            Some(WireError::Malformed)
+        );
+        let mut world = World::generate(SceneKind::City, 1);
+        world.props[0].center.y = f32::INFINITY;
+        assert_eq!(
+            decode::<ServerMsg>(&encode(&round_start(world))).err(),
+            Some(WireError::Malformed)
+        );
+    }
+
+    #[test]
+    fn decode_rejects_trailing_bytes_wrong_version_and_empty() {
+        let mut bytes = encode(&ClientMsg::Start);
+        assert!(decode::<ClientMsg>(&bytes).is_ok());
+        bytes.push(0);
+        assert_eq!(
+            decode::<ClientMsg>(&bytes).err(),
+            Some(WireError::Malformed)
+        );
+
+        let mut bytes = encode(&ClientMsg::Start);
+        bytes[0] = VERSION + 1;
+        assert_eq!(
+            decode::<ClientMsg>(&bytes).err(),
+            Some(WireError::Version { got: VERSION + 1 })
+        );
+        assert_eq!(decode::<ClientMsg>(&[]).err(), Some(WireError::Malformed));
+    }
+}
