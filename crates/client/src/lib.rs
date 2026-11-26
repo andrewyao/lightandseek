@@ -3,3 +3,5 @@
 
 pub mod draw;
 pub mod input;
+pub mod probe;
+pub mod ui;
