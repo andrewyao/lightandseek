@@ -82,7 +82,8 @@ pub struct Hud {
     pub phase: &'static str,
     /// Whole seconds left in the phase, rounded up.
     pub seconds: u32,
-    pub hiders_left: usize,
+    /// `None` while blind: the seeker's snapshots carry no hiders then.
+    pub hiders_left: Option<usize>,
     /// The seeker's screen is black while hiders hide.
     pub blind: bool,
     /// Whom a spectator is watching.
@@ -110,7 +111,7 @@ pub fn hud(view: &ViewState<'_>, camera: Camera) -> Hud {
         role,
         phase,
         seconds: view.seconds_left.ceil() as u32,
-        hiders_left: view.hiders_left,
+        hiders_left: (!view.blind()).then_some(view.hiders_left),
         blind: view.blind(),
         watching,
     }
@@ -352,7 +353,7 @@ mod tests {
         );
         assert_eq!(
             (h.role.as_str(), h.phase, h.seconds, h.hiders_left, h.blind),
-            ("Seeker", "Hiding", 3, 2, true)
+            ("Seeker", "Hiding", 3, None, true)
         );
         let caught = avatar(1, Role::Hider, Status::Caught);
         let h = hud(

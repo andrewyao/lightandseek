@@ -4,8 +4,7 @@
 //! `game::Vec2(x, y)` is world `(x, 0, y)`; both crates put yaw 0 on +Z.
 
 use engine::{
-    Environment, FollowCamera, Instance, OrbitCamera, SceneDraw, Shape, View, Wedge,
-    avatar_instances,
+    Environment, FollowCamera, Instance, SceneDraw, Shape, View, Wedge, avatar_instances,
 };
 use game::rules::{CATCH_DIST, CATCH_HALF_ANGLE};
 use game::{AvatarView, PlayerId, Role, SceneKind, Status, Vec2, ViewState, World};
@@ -126,20 +125,26 @@ pub fn scene(world: &World, avatars: &[AvatarView]) -> Scene {
 /// Third person behind `feet`, looking along `yaw`, pulled in front of any
 /// solid between the avatar and the eye.
 pub fn follow(world: &World, feet: Vec2, yaw: f32, aspect: f32) -> View {
-    let cam = FollowCamera::new(ground(feet), yaw);
+    clipped(world, FollowCamera::new(ground(feet), yaw), aspect)
+}
+
+/// A spectator's view: higher and further back than `follow`, circling
+/// `feet` at `yaw`, and clipped the same way so a wall never hides the
+/// watched player.
+pub fn orbit(world: &World, feet: Vec2, yaw: f32, aspect: f32) -> View {
+    let cam = FollowCamera {
+        pitch: 0.6,
+        distance: 9.0,
+        ..FollowCamera::new(ground(feet), yaw)
+    };
+    clipped(world, cam, aspect)
+}
+
+fn clipped(world: &World, cam: FollowCamera, aspect: f32) -> View {
     cam.view_clipped(aspect, |from, to| {
         let g = |v: Vec3| game::Vec3::new(v.x, v.y, v.z);
         world.ray_hit(g(from), g(to)).unwrap_or(f32::INFINITY)
     })
-}
-
-/// A spectator's view: circling `feet` from above at `yaw`.
-pub fn orbit(feet: Vec2, yaw: f32, aspect: f32) -> View {
-    let mut cam = OrbitCamera::new(ground(feet));
-    cam.yaw = yaw;
-    cam.pitch = 0.75;
-    cam.distance = 14.0;
-    cam.view(aspect)
 }
 
 #[cfg(test)]
