@@ -1,0 +1,76 @@
+//! Renders park, city, and kitchen with a few avatars to PNGs, from above
+//! and through the seeker's follow camera.
+//!
+//! cargo run -p client --example scenes -- [out-dir]
+
+use std::path::PathBuf;
+
+use client::draw;
+use engine::{Offscreen, OrbitCamera, write_png};
+use game::geom::yaw_toward;
+use game::{AvatarView, Body, Control, PlayerId, Role, SceneKind, Status, World};
+use glam::Vec3;
+
+const SIZE: [u32; 2] = [960, 600];
+const SEED: u64 = 11;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::args()
+        .nth(1)
+        .map_or_else(|| PathBuf::from("target"), PathBuf::from);
+    let mut off = Offscreen::new(SIZE)?;
+    for kind in SceneKind::ALL {
+        let world = World::generate(kind, SEED);
+        let avatars = place(&world);
+        let scene = draw::scene(&world, &avatars);
+
+        let mut top = OrbitCamera::new(Vec3::ZERO);
+        top.pitch = 0.95;
+        top.distance = 46.0;
+        let seeker = avatars[0].body;
+        for (name, view) in [
+            ("top", top.view(off.aspect())),
+            (
+                "follow",
+                draw::follow(&world, seeker.pos, seeker.yaw, off.aspect()),
+            ),
+        ] {
+            let path = dir.join(format!("scene-{kind:?}-{name}.png").to_lowercase());
+            write_png(&path, SIZE, &off.render(&view, &scene.draw()))?;
+            println!("wrote {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// The seeker on spawn 0 facing the nearest hider, hiders on the next
+/// three spawns, and one caught hider who must not show.
+fn place(world: &World) -> Vec<AvatarView> {
+    let at = |i: usize, role, status, yaw| AvatarView {
+        id: PlayerId(i as u32 + 1),
+        body: Body {
+            pos: world.spawns[i],
+            yaw,
+        },
+        role,
+        status,
+        control: Control::Human,
+    };
+    let seeker = world.spawns[0];
+    let near = world.spawns[1..4]
+        .iter()
+        .copied()
+        .min_by(|a, b| a.distance(seeker).total_cmp(&b.distance(seeker)))
+        .expect("spawns");
+    let mut out = vec![at(
+        0,
+        Role::Seeker,
+        Status::Active,
+        yaw_toward(near - seeker),
+    )];
+    for i in 1..4 {
+        out.push(at(i, Role::Hider, Status::Active, i as f32));
+    }
+    out.push(at(4, Role::Hider, Status::Caught, 0.0));
+    out
+}
