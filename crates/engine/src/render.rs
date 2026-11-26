@@ -651,6 +651,43 @@ mod tests {
         }
     }
 
+    /// WGSL forbids mixing bitwise and arithmetic operators without
+    /// parentheses (`a * b ^ c`). Chrome's compiler enforces it; naga, and
+    /// so every other test here, does not.
+    #[test]
+    fn no_expression_mixes_bitwise_and_arithmetic_operators_unparenthesised() {
+        let source = include_str!("shader.wgsl");
+        // Per open parenthesis, and one for the statement: saw arithmetic,
+        // saw bitwise. Expressions span lines, so this runs over the file.
+        let mut levels = vec![(false, false)];
+        for (n, line) in source.lines().enumerate() {
+            let chars: Vec<char> = line.split("//").next().unwrap_or("").chars().collect();
+            for (i, &c) in chars.iter().enumerate() {
+                let before = i.checked_sub(1).and_then(|j| chars.get(j)).copied();
+                let after = chars.get(i + 1).copied();
+                let lone = before != Some(c) && after != Some(c);
+                match c {
+                    '(' => levels.push((false, false)),
+                    ')' if levels.len() > 1 => {
+                        levels.pop();
+                    }
+                    ',' | ';' | '{' | '}' | '=' => {
+                        *levels.last_mut().expect("never empty") = (false, false)
+                    }
+                    '*' | '/' | '%' => levels.last_mut().expect("never empty").0 = true,
+                    '^' | '|' | '&' if lone => levels.last_mut().expect("never empty").1 = true,
+                    _ => {}
+                }
+                let &(arith, bits) = levels.last().expect("never empty");
+                assert!(
+                    !(arith && bits),
+                    "shader.wgsl:{}: parenthesise: {line}",
+                    n + 1
+                );
+            }
+        }
+    }
+
     /// The browser falls back to WebGL2, which runs these entry points as
     /// GLSL ES 3.00; the native test adapter never takes that path.
     #[test]
