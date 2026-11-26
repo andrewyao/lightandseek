@@ -32,11 +32,15 @@ use crate::room::{RoomName, Rooms};
 /// bound the stalled socket would stay open forever.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long an upgraded socket may wait before sending its hello.
+pub const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub dist: PathBuf,
     /// How long a room outlives its last socket.
     pub linger: Duration,
+    pub hello_timeout: Duration,
 }
 
 impl Config {
@@ -44,6 +48,7 @@ impl Config {
         Config {
             dist,
             linger: room::LINGER,
+            hello_timeout: HELLO_TIMEOUT,
         }
     }
 }
@@ -62,8 +67,11 @@ impl Server {
         let rooms = Rooms::new(config.linger);
         let app = Router::new()
             .route("/ws/{room}", get(upgrade))
-            .fallback_service(ServeDir::new(config.dist))
-            .with_state(rooms.clone());
+            .fallback_service(ServeDir::new(&config.dist))
+            .with_state(App {
+                rooms: rooms.clone(),
+                hello_timeout: config.hello_timeout,
+            });
         let (stop, stopped) = oneshot::channel::<()>();
         let http = tokio::spawn(async move {
             axum::serve(listener, app)
@@ -97,6 +105,13 @@ impl Server {
     }
 }
 
+/// What every socket handler shares.
+#[derive(Clone, Debug)]
+struct App {
+    rooms: Rooms,
+    hello_timeout: Duration,
+}
+
 impl<S: Send + Sync> FromRequestParts<S> for RoomName {
     type Rejection = Response;
 
@@ -111,22 +126,34 @@ impl<S: Send + Sync> FromRequestParts<S> for RoomName {
     }
 }
 
-async fn upgrade(room: RoomName, State(rooms): State<Rooms>, ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(move |socket| serve_socket(socket, room, rooms))
+async fn upgrade(room: RoomName, State(app): State<App>, ws: WebSocketUpgrade) -> Response {
+    ws.on_upgrade(move |socket| serve_socket(socket, room, app))
 }
 
 /// Pumps one socket. Its first binary frame is the hello. Any text frame or
-/// protocol error closes this socket only.
-async fn serve_socket(socket: WebSocket, room: RoomName, rooms: Rooms) {
+/// protocol error closes this socket only, as does missing `hello_timeout`.
+async fn serve_socket(socket: WebSocket, room: RoomName, app: App) {
     let (mut sink, mut stream) = socket.split();
-    let hello = loop {
-        match stream.next().await {
-            Some(Ok(Message::Binary(b))) => break b,
-            Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
-            _ => return,
+    let hello = timeout(app.hello_timeout, async {
+        loop {
+            match stream.next().await {
+                Some(Ok(Message::Binary(b))) => break Some(b),
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                _ => break None,
+            }
+        }
+    })
+    .await;
+    let hello = match hello {
+        Ok(Some(b)) => b,
+        Ok(None) => return,
+        Err(_) => {
+            warn!(room = room.as_str(), "no hello in time, closing socket");
+            let _ = timeout(WRITE_TIMEOUT, sink.send(Message::Close(None))).await;
+            return;
         }
     };
-    let Some((member, mut inbox)) = rooms.join(&room, hello).await else {
+    let Some((member, mut inbox)) = app.rooms.join(&room, hello).await else {
         let _ = timeout(WRITE_TIMEOUT, sink.send(Message::Close(None))).await;
         return;
     };

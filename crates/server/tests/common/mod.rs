@@ -29,7 +29,7 @@ pub async fn start_lingering(linger: Duration) -> Server {
     .await
 }
 
-async fn start_with(config: Config) -> Server {
+pub async fn start_with(config: Config) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     Server::start(listener, config).await.unwrap()
 }
