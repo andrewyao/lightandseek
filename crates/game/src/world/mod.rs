@@ -198,6 +198,11 @@ impl<'a> Builder<'a> {
         });
     }
 
+    /// Blocks without a prop of its own. The caller draws it in parts.
+    fn solid(&mut self, shape: Footprint, height: f32) {
+        self.solids.push(Solid { shape, height });
+    }
+
     /// Drawn only. Canopies, roofs, shelves above head height.
     fn deco(&mut self, shape: Shape, center: Vec3, size: Vec3, color: [u8; 3]) {
         self.props.push(Prop {
