@@ -110,8 +110,8 @@ async fn a_seeker_that_reaches_and_faces_a_hider_catches_it() {
     };
     let (sid, hid) = (s.rep.you(), h.rep.you());
 
-    // The hider parks a metre in front of the frozen seeker, then the seeker
-    // turns to face it and closes in once seeking starts.
+    // The hider parks a metre behind the frozen seeker, outside its catch
+    // wedge, so only the seeker's own turn can catch it.
     play(&mut [&mut *s, &mut *h], 40, |cs| {
         let (s, h) = (&cs[0], &cs[1]);
         let hiding = matches!(h.view().phase, Phase::Hiding { .. });
@@ -119,7 +119,7 @@ async fn a_seeker_that_reaches_and_faces_a_hider_catches_it() {
             let hv = h.view();
             let me = hv.me.unwrap().body.pos;
             let them = hv.others.iter().find(|o| o.id == sid).unwrap().body;
-            let to = them.pos + facing(them.yaw) - me;
+            let to = them.pos - facing(them.yaw) - me;
             (hiding && to.length() > 0.3).then(|| yaw_toward(to))
         };
         let smove = {
@@ -128,7 +128,11 @@ async fn a_seeker_that_reaches_and_faces_a_hider_catches_it() {
             let hider = sv.others.iter().find(|o| o.id == hid).map(|o| o.body.pos);
             hider.map(|p| {
                 let to = p - me;
-                let mv = if to.length() > 1.5 { FORWARD } else { Vec2::ZERO };
+                let mv = if to.length() > 1.5 {
+                    FORWARD
+                } else {
+                    Vec2::ZERO
+                };
                 (mv, yaw_toward(to))
             })
         };
@@ -144,7 +148,10 @@ async fn a_seeker_that_reaches_and_faces_a_hider_catches_it() {
     .await;
 
     for c in [&a, &b] {
-        let caught = Event::Caught { hider: hid, by: sid };
+        let caught = Event::Caught {
+            hider: hid,
+            by: sid,
+        };
         assert!(c.events.contains(&caught), "{:?}", c.events);
         assert!(c.events.contains(&Event::RoundEnd {
             winner: Role::Seeker

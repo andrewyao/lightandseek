@@ -270,7 +270,12 @@ impl Room {
                 reply,
             } => match self.game.join(conn, &hello) {
                 Err(why) => {
-                    warn!(room = self.name.as_str(), conn = conn.0, ?why, "rejected hello");
+                    warn!(
+                        room = self.name.as_str(),
+                        conn = conn.0,
+                        ?why,
+                        "rejected hello"
+                    );
                     let _ = reply.send(Err(()));
                 }
                 Ok(step) => {
