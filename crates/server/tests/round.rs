@@ -59,15 +59,20 @@ async fn two_clients_and_a_bot_play_a_round_to_the_end() {
         "seed 7 makes the bot seek, so both humans see each other while hiding"
     );
     assert!(matches!(vb.phase, Phase::Hiding { .. }));
+    let a_before = seen(&b, ida).unwrap();
+    let world = va.world.unwrap();
+    let yaw = (0..16)
+        .map(|i| i as f32 * std::f32::consts::TAU / 16.0)
+        .find(|&yaw| world.ray_clear(a_before, a_before + facing(yaw) * 4.0, 0.01))
+        .expect("an open heading");
     drop((va, vb));
 
-    let a_before = seen(&b, ida).unwrap();
     let b_before = seen(&a, idb).unwrap();
     let mut ticks = 0;
     play(&mut [&mut a, &mut b], 5, |cs| {
         ticks += 1;
         if ticks <= 15 {
-            cs[0].input(FORWARD, 0.0);
+            cs[0].input(FORWARD, yaw);
         }
         ticks == 20
     })

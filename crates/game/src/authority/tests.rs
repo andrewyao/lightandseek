@@ -229,11 +229,13 @@ fn headless_round(seed: u64, scene: SceneKind) -> (Net, Role) {
         LobbyConfig {
             scene: Some(scene),
             seed: Some(seed),
+            // Spawns are spread out, so the bot seeker needs time to search.
+            seek_secs: 90,
             ..config(1, 3)
         },
     );
     net.send(1, &ClientMsg::Start);
-    net.tick_until(20 * 40, |p| matches!(p, Phase::Results { .. }));
+    net.tick_until(20 * 100, |p| matches!(p, Phase::Results { .. }));
     let Phase::Results { winner, .. } = net.room.phase() else {
         unreachable!()
     };
@@ -414,6 +416,19 @@ fn walk(per_tick: u32) -> Vec<Vec2> {
     );
     net.send(1, &ClientMsg::Start);
     net.tick_until(100, |p| matches!(p, Phase::Seeking { .. }));
+    let world = net.room.world().unwrap();
+    let start = net
+        .room
+        .avatars()
+        .iter()
+        .find(|a| a.id == me)
+        .unwrap()
+        .body
+        .pos;
+    let yaw = (0..16)
+        .map(|i| i as f32 * std::f32::consts::TAU / 16.0)
+        .find(|&yaw| world.ray_clear(start, start + crate::geom::facing(yaw) * 4.0, 0.01))
+        .expect("an open heading");
     let mut next = 1;
     let mut out = Vec::new();
     for _ in 0..40 {
@@ -421,7 +436,7 @@ fn walk(per_tick: u32) -> Vec<Vec2> {
             let input = Input {
                 tick: Tick(next),
                 mv: Vec2::new(1.0, 0.0),
-                yaw: 1.0,
+                yaw,
             };
             net.send(1, &ClientMsg::Input(input));
             next += 1;
@@ -567,4 +582,53 @@ fn a_full_lobby_seats_the_earliest_and_spectates_the_rest() {
     let (_, roster) = last_roster(&net.take(2));
     let seats: Vec<(PlayerId, Seat)> = roster.iter().map(|m| (m.id, m.seat)).collect();
     assert_eq!(seats, [(a, Seat::Playing), (b, Seat::Spectating)]);
+}
+
+#[test]
+fn idle_players_start_the_seek_spread_out_and_out_of_the_seekers_reach() {
+    let n = u64::from(MAX_HUMANS);
+    for kind in SceneKind::ALL {
+        for seed in 0..40 {
+            let mut net = Net::new(seed);
+            for c in 1..=n {
+                net.join(c, None);
+            }
+            let config = LobbyConfig {
+                scene: Some(kind),
+                seed: Some(seed),
+                ..config(MAX_HUMANS, 0)
+            };
+            net.configure(1, config);
+            net.send(1, &ClientMsg::Start);
+            net.tick_until(20 * 10, |p| matches!(p, Phase::Seeking { .. }));
+            net.tick();
+
+            let avatars = net.room.avatars();
+            assert_eq!(avatars.len(), MAX_HUMANS as usize);
+            let seeker = net.seeker();
+            let at = |id| avatars.iter().find(|a| a.id == id).unwrap().body.pos;
+            for (i, a) in avatars.iter().enumerate() {
+                for b in &avatars[i + 1..] {
+                    let d = a.body.pos.distance(b.body.pos);
+                    assert!(d >= 6.0, "{kind:?} seed {seed}: {:?}-{:?} {d}", a.id, b.id);
+                }
+                if a.id != seeker {
+                    let d = a.body.pos.distance(at(seeker));
+                    assert!(d >= 8.0, "{kind:?} seed {seed}: hider {:?} {d}", a.id);
+                    assert!(d > crate::rules::CATCH_DIST);
+                    assert_eq!(a.status, Status::Active);
+                }
+            }
+            for c in 1..=n {
+                let caught = net
+                    .take(c)
+                    .into_iter()
+                    .any(|m| matches!(m, ServerMsg::Caught { .. }));
+                assert!(
+                    !caught,
+                    "{kind:?} seed {seed}: a catch on the first seek tick"
+                );
+            }
+        }
+    }
 }

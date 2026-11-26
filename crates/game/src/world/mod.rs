@@ -325,6 +325,22 @@ mod tests {
     }
 
     #[test]
+    fn spawns_are_spread_and_the_seekers_is_far_from_every_other() {
+        for kind in SceneKind::ALL {
+            for seed in 0..100 {
+                let s = World::generate(kind, seed).spawns;
+                for i in 0..s.len() {
+                    for j in i + 1..s.len() {
+                        let d = s[i].distance(s[j]);
+                        let want = if i == 0 { 8.0 } else { 6.0 };
+                        assert!(d >= want, "{kind:?} seed {seed}: spawns {i}-{j} {d}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn kinds_and_seeds_produce_different_scenes() {
         let park = World::generate(SceneKind::Park, 1);
         assert_ne!(park, World::generate(SceneKind::Park, 2));

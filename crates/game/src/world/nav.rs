@@ -15,6 +15,9 @@ const CLEAR: f32 = 0.4;
 const BLOCKED: u32 = u32::MAX;
 const STRAIGHT: u32 = 10;
 const DIAGONAL: u32 = 14;
+/// Spawn spacing counts distance to the seeker at this share, so it starts
+/// 8 u from a hider wherever hiders start 6 u apart.
+const SEEKER_SHARE: f32 = 0.75;
 
 #[derive(Debug)]
 pub(crate) struct NavGrid {
@@ -244,30 +247,39 @@ impl NavGrid {
         None
     }
 
-    /// Up to `k` points in the largest component, each at least 1.5 u from
-    /// the others, breadth-first from a random anchor so players start close.
+    /// Up to `k` cell centres in the largest component, by farthest-point
+    /// sampling from a random first cell. Each point is the reachable cell
+    /// farthest from all before it, so every prefix is as spread out as the
+    /// map allows. The first is the seeker's, and distances to it count for
+    /// `SEEKER_SHARE`, so it keeps a wider margin than any other pair.
+    /// Cells with open ground around them come first, since sampling alone
+    /// would start everyone pressed into a corner.
     pub fn spawns(&self, rng: &mut Rng, k: usize) -> Vec<Vec2> {
-        let Some(anchor) = self.random_reachable(rng) else {
-            return Vec::new();
+        let open: Vec<usize> = self
+            .reachable()
+            .filter(|&i| self.cover(i, 1) == 0)
+            .collect();
+        let cells: Vec<Vec2> = if open.len() >= k {
+            open.into_iter().map(|i| self.center(i)).collect()
+        } else {
+            self.reachable().map(|i| self.center(i)).collect()
         };
-        let mut seen = vec![false; self.label.len()];
-        let mut queue = VecDeque::from([anchor]);
-        seen[anchor] = true;
-        let mut out: Vec<Vec2> = Vec::new();
-        while let Some(i) = queue.pop_front() {
-            let c = self.center(i);
-            if out.iter().all(|s| s.distance(c) >= 1.5) {
-                out.push(c);
-                if out.len() == k {
-                    break;
-                }
+        if cells.is_empty() {
+            return Vec::new();
+        }
+        let mut gap = vec![f32::INFINITY; cells.len()];
+        let mut next = rng.below(cells.len());
+        let mut out = Vec::with_capacity(k);
+        while out.len() < k.min(cells.len()) {
+            let p = cells[next];
+            let share = if out.is_empty() { SEEKER_SHARE } else { 1.0 };
+            out.push(p);
+            for (g, c) in gap.iter_mut().zip(&cells) {
+                *g = g.min(c.distance(p) * share);
             }
-            for (j, _) in self.neighbors(i) {
-                if !seen[j] {
-                    seen[j] = true;
-                    queue.push_back(j);
-                }
-            }
+            next = (0..cells.len())
+                .max_by(|&a, &b| gap[a].total_cmp(&gap[b]))
+                .expect("cells is not empty");
         }
         out
     }
