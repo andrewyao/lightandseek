@@ -27,6 +27,33 @@ impl Shape {
     pub const ALL: [Shape; 4] = [Shape::Box, Shape::Cylinder, Shape::Capsule, Shape::Sphere];
 }
 
+/// The pattern a surface shows over its colour. Patterns are generated in
+/// the shader at a fixed physical scale, so a wider prop shows more bricks
+/// rather than bigger ones.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub enum Material {
+    #[default]
+    Plain,
+    Wood,
+    Brick,
+    Plaster,
+    Concrete,
+    Asphalt,
+    Tile,
+    Grass,
+    Foliage,
+    Fabric,
+    Metal,
+    Water,
+}
+
+impl Material {
+    /// The id the shader switches on.
+    pub(crate) fn id(self) -> f32 {
+        f32::from(self as u8)
+    }
+}
+
 /// One opaque, lit shape.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Instance {
@@ -34,16 +61,23 @@ pub struct Instance {
     /// Rotation, scale, and translation only: no shear. Normals rely on it.
     pub model: Mat4,
     pub color: [f32; 3],
+    pub material: Material,
 }
 
 impl Instance {
-    /// `shape` scaled to `size`, turned by `yaw`, centred on `center`.
+    /// A plain `shape` scaled to `size`, turned by `yaw`, centred on
+    /// `center`.
     pub fn new(shape: Shape, center: Vec3, size: Vec3, yaw: f32, color: [f32; 3]) -> Instance {
         Instance {
             shape,
             model: Mat4::from_scale_rotation_translation(size, Quat::from_rotation_y(yaw), center),
             color,
+            material: Material::Plain,
         }
+    }
+
+    pub fn with_material(self, material: Material) -> Instance {
+        Instance { material, ..self }
     }
 }
 
@@ -69,6 +103,7 @@ pub struct Environment {
     pub ground: [f32; 3],
     /// Toward the sun. Need not be unit length.
     pub sun: Vec3,
+    pub ground_material: Material,
     /// Fog starts at the first distance from the eye and is total at the
     /// second.
     pub fog: [f32; 2],
@@ -80,6 +115,7 @@ impl Default for Environment {
             sky: [0.62, 0.78, 0.92],
             ground: [0.42, 0.6, 0.32],
             sun: Vec3::new(0.45, 1.0, 0.3),
+            ground_material: Material::Plain,
             fog: [25.0, 90.0],
         }
     }
@@ -207,6 +243,7 @@ pub fn avatar_instances(
             ankle.z + SHOE_FORWARD,
         )) * Mat4::from_scale(SHOE_SIZE),
         color: SHOE,
+        material: Material::Plain,
     };
     let local = [
         (
@@ -281,6 +318,7 @@ fn segment(a: Vec3, b: Vec3, radius: f32, color: [f32; 3]) -> Instance {
             (a + b) / 2.0,
         ),
         color,
+        material: Material::Plain,
     }
 }
 

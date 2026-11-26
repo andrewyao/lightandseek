@@ -115,8 +115,9 @@ pub(crate) fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, Wi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geom::Vec2;
+    use crate::geom::{Vec2, Vec3};
     use crate::model::SceneKind;
+    use crate::world::{Material, Prop, Shape};
 
     fn round_start(world: World) -> ServerMsg {
         ServerMsg::RoundStart {
@@ -175,6 +176,25 @@ mod tests {
             decode::<ServerMsg>(&encode(&round_start(world))).err(),
             Some(WireError::Malformed)
         );
+    }
+
+    #[test]
+    fn decode_rejects_a_material_it_does_not_know() {
+        let mut world = World::open(SceneKind::Park);
+        world.props.push(Prop {
+            shape: Shape::Box,
+            center: Vec3::new(0.0, 0.5, 0.0),
+            size: Vec3::new(1.0, 1.0, 1.0),
+            color: [1, 2, 3],
+            material: Material::Water,
+        });
+        let mut bytes = encode(&world);
+        assert_eq!(decode::<World>(&bytes), Ok(world));
+        // The prop's material is the last byte before the empty spawn list.
+        let at = bytes.len() - 2;
+        assert_eq!(bytes[at], Material::Water as u8);
+        bytes[at] = 200;
+        assert_eq!(decode::<World>(&bytes).err(), Some(WireError::Malformed));
     }
 
     #[test]

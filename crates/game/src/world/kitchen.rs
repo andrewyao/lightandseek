@@ -9,33 +9,43 @@
 //! `rules::EYE_Y`, so they only hide a player from the camera. The fridge,
 //! shelving, tall cabinets, and plants block sight.
 
-use super::{Aabb2, Builder, Footprint, HALF_EXTENT, Shape, Vec2, Vec3};
+use super::{Aabb2, Builder, Footprint, HALF_EXTENT, Material, Paint, Shape, Vec2, Vec3, paint};
 
-const WALL: [u8; 3] = [226, 218, 200];
-const CABINET: [u8; 3] = [92, 128, 118];
-const STONE: [u8; 3] = [222, 220, 212];
-const STEEL: [u8; 3] = [178, 182, 188];
-const DARK: [u8; 3] = [44, 44, 48];
-const GLASS: [u8; 3] = [150, 196, 220];
-const WOOD: [u8; 3] = [150, 100, 62];
-const LIGHT_WOOD: [u8; 3] = [196, 158, 112];
-const SHELF: [u8; 3] = [120, 84, 54];
-const TILE: [[u8; 3]; 2] = [[236, 232, 224], [70, 74, 82]];
-const FLOOR_WOOD: [u8; 3] = [176, 138, 98];
-const CONCRETE: [u8; 3] = [168, 168, 162];
-const RUG: [[u8; 3]; 3] = [[160, 60, 56], [62, 92, 140], [196, 160, 80]];
-const SOFA: [u8; 3] = [96, 110, 150];
-const POT: [u8; 3] = [184, 98, 64];
-const LEAVES: [u8; 3] = [64, 130, 70];
-const WHITE: [u8; 3] = [240, 240, 236];
-const CARDBOARD: [[u8; 3]; 2] = [[196, 160, 110], [176, 140, 96]];
-const GOODS: [[u8; 3]; 6] = [
-    [210, 70, 60],
-    [240, 200, 80],
-    [80, 150, 90],
-    [70, 110, 190],
-    [230, 230, 220],
-    [200, 130, 60],
+const WALL: Paint = paint([226, 218, 200], Material::Plaster);
+const CABINET: Paint = paint([92, 128, 118], Material::Wood);
+const STONE: Paint = paint([222, 220, 212], Material::Concrete);
+const STEEL: Paint = paint([178, 182, 188], Material::Metal);
+const DARK: Paint = paint([44, 44, 48], Material::Plain);
+const GLASS: Paint = paint([150, 196, 220], Material::Plain);
+const WOOD: Paint = paint([150, 100, 62], Material::Wood);
+const LIGHT_WOOD: Paint = paint([196, 158, 112], Material::Wood);
+const SHELF: Paint = paint([120, 84, 54], Material::Wood);
+const TILE: [Paint; 2] = [
+    paint([236, 232, 224], Material::Tile),
+    paint([70, 74, 82], Material::Tile),
+];
+const FLOOR_WOOD: Paint = paint([176, 138, 98], Material::Wood);
+const CONCRETE: Paint = paint([168, 168, 162], Material::Concrete);
+const RUG: [Paint; 3] = [
+    paint([160, 60, 56], Material::Fabric),
+    paint([62, 92, 140], Material::Fabric),
+    paint([196, 160, 80], Material::Fabric),
+];
+const SOFA: Paint = paint([96, 110, 150], Material::Fabric);
+const POT: Paint = paint([184, 98, 64], Material::Plaster);
+const LEAVES: Paint = paint([64, 130, 70], Material::Foliage);
+const WHITE: Paint = paint([240, 240, 236], Material::Plain);
+const CARDBOARD: [Paint; 2] = [
+    paint([196, 160, 110], Material::Plain),
+    paint([176, 140, 96], Material::Plain),
+];
+const GOODS: [Paint; 6] = [
+    paint([210, 70, 60], Material::Plain),
+    paint([240, 200, 80], Material::Plain),
+    paint([80, 150, 90], Material::Plain),
+    paint([70, 110, 190], Material::Plain),
+    paint([230, 230, 220], Material::Plain),
+    paint([200, 130, 60], Material::Plain),
 ];
 
 const WALL_HEIGHT: f32 = 2.4;
@@ -176,7 +186,13 @@ fn kitchen(k: &mut Kit, r: Aabb2) {
             WALL_HEIGHT,
             DARK,
         );
-        k.disc(c + Vec2::new(dx, 0.0), 0.25, 1.6, 1.75, [240, 210, 150]);
+        k.disc(
+            c + Vec2::new(dx, 0.0),
+            0.25,
+            1.6,
+            1.75,
+            paint([240, 210, 150], Material::Plain),
+        );
     }
     for dx in [-1.4, 0.0, 1.4] {
         let at = Vec2::new(c.x + dx, island.max.y + 0.55);
@@ -216,7 +232,7 @@ fn dining(k: &mut Kit, r: Aabb2) {
             (1.0, 0.0),
         ],
     );
-    k.disc(c, 0.35, 1.6, 1.8, [240, 210, 150]);
+    k.disc(c, 0.35, 1.6, 1.8, paint([240, 210, 150], Material::Plain));
     k.slab(
         Aabb2::centered(c, Vec2::new(0.02, 0.02)),
         1.8,
@@ -256,7 +272,7 @@ fn dining(k: &mut Kit, r: Aabb2) {
 /// A sofa, armchair, and coffee table facing a TV on the outer wall, with
 /// bookshelves.
 fn living(k: &mut Kit, r: Aabb2) {
-    k.slab(r, 0.0, 0.02, [150, 112, 80]);
+    k.slab(r, 0.0, 0.02, paint([150, 112, 80], Material::Wood));
     let x = r.center().x + k.range(-1.0, 1.0);
     let stand = rect(x - 1.6, r.max.y - 0.6, x + 1.6, r.max.y);
     k.block(stand, 0.4, WOOD);
@@ -356,7 +372,7 @@ fn pantry(k: &mut Kit, r: Aabb2) {
 }
 
 fn laundry(k: &mut Kit, r: Aabb2) {
-    k.slab(r, 0.0, 0.02, [196, 210, 214]);
+    k.slab(r, 0.0, 0.02, paint([196, 210, 214], Material::Tile));
     let y = r.center().y - 1.5;
     for i in 0..2 {
         let y0 = y + i as f32 * 0.95;
@@ -395,7 +411,7 @@ fn laundry(k: &mut Kit, r: Aabb2) {
     }
     for _ in 0..2 {
         if let Some(c) = k.scatter(r, Vec2::new(0.3, 0.3), 1.2) {
-            k.pillar(c, 0.3, 0.4, [214, 200, 160]);
+            k.pillar(c, 0.3, 0.4, paint([214, 200, 160], Material::Fabric));
         }
     }
 }
@@ -430,9 +446,9 @@ fn storeroom(k: &mut Kit, r: Aabb2) {
             }
             let half = k.range(0.35, 0.5);
             let height = k.range(0.5, 1.4);
-            let color = k.pick(&CARDBOARD);
+            let finish = k.pick(&CARDBOARD);
             let at = Vec2::new(c.x + dx, c.y + dy);
-            k.block(Aabb2::centered(at, Vec2::new(half, half)), height, color);
+            k.block(Aabb2::centered(at, Vec2::new(half, half)), height, finish);
         }
     }
 }
@@ -491,34 +507,34 @@ impl Kit<'_, '_> {
         self.b.pick(xs)
     }
 
-    fn block(&mut self, r: Aabb2, height: f32, color: [u8; 3]) {
-        self.b.block(self.sym.rect(r), height, color);
+    fn block(&mut self, r: Aabb2, height: f32, paint: Paint) {
+        self.b.block(self.sym.rect(r), height, paint);
     }
 
-    fn pillar(&mut self, c: Vec2, radius: f32, height: f32, color: [u8; 3]) {
-        self.b.pillar(self.sym.pt(c), radius, height, color);
+    fn pillar(&mut self, c: Vec2, radius: f32, height: f32, paint: Paint) {
+        self.b.pillar(self.sym.pt(c), radius, height, paint);
     }
 
     /// A drawn box over `r` from `y0` to `y1`.
-    fn slab(&mut self, r: Aabb2, y0: f32, y1: f32, color: [u8; 3]) {
+    fn slab(&mut self, r: Aabb2, y0: f32, y1: f32, paint: Paint) {
         let r = self.sym.rect(r);
         let c = r.center();
         self.b.deco(
             Shape::Box,
             Vec3::new(c.x, (y0 + y1) / 2.0, c.y),
             Vec3::new(r.max.x - r.min.x, y1 - y0, r.max.y - r.min.y),
-            color,
+            paint,
         );
     }
 
     /// A drawn cylinder from `y0` to `y1`.
-    fn disc(&mut self, c: Vec2, radius: f32, y0: f32, y1: f32, color: [u8; 3]) {
+    fn disc(&mut self, c: Vec2, radius: f32, y0: f32, y1: f32, paint: Paint) {
         let c = self.sym.pt(c);
         self.b.deco(
             Shape::Cylinder,
             Vec3::new(c.x, (y0 + y1) / 2.0, c.y),
             Vec3::new(radius * 2.0, y1 - y0, radius * 2.0),
-            color,
+            paint,
         );
     }
 
@@ -669,7 +685,7 @@ impl Kit<'_, '_> {
         while s < hi - 0.3 {
             let w = self.range(0.18, 0.32);
             let tall = self.range(0.12, 0.32);
-            let color = self.pick(&GOODS);
+            let finish = self.pick(&GOODS);
             if self.b.rng.chance(0.6) {
                 let (a, b) = (face - 0.08, face + 0.04);
                 let (a, b) = if n.x < 0.0 || n.y < 0.0 {
@@ -684,9 +700,9 @@ impl Kit<'_, '_> {
                 };
                 if self.b.rng.chance(0.4) {
                     let c = r.center();
-                    self.disc(c, w / 2.0, y, y + tall, color);
+                    self.disc(c, w / 2.0, y, y + tall, finish);
                 } else {
-                    self.slab(r, y, y + tall, color);
+                    self.slab(r, y, y + tall, finish);
                 }
             }
             s += w + 0.14;

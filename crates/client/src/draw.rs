@@ -4,7 +4,7 @@
 //! `game::Vec2(x, y)` is world `(x, 0, y)`; both crates put yaw 0 on +Z.
 
 use engine::{
-    Environment, FollowCamera, Instance, SceneDraw, Shape, View, Wedge, avatar_instances,
+    Environment, FollowCamera, Instance, Material, SceneDraw, Shape, View, Wedge, avatar_instances,
 };
 use game::rules::{CATCH_DIST, CATCH_HALF_ANGLE};
 use game::{AvatarView, PlayerId, Role, SceneKind, Status, Vec2, ViewState, World};
@@ -46,12 +46,14 @@ pub fn environment(kind: SceneKind) -> Environment {
             sky: [0.6, 0.78, 0.95],
             ground: [0.4, 0.62, 0.3],
             sun,
+            ground_material: Material::Grass,
             fog: [30.0, 95.0],
         },
         SceneKind::City => Environment {
             sky: [0.72, 0.75, 0.8],
             ground: [0.3, 0.31, 0.34],
             sun: Vec3::new(-0.5, 1.0, 0.25),
+            ground_material: Material::Asphalt,
             fog: [25.0, 85.0],
         },
         SceneKind::Kitchen => Environment {
@@ -60,8 +62,26 @@ pub fn environment(kind: SceneKind) -> Environment {
             sky: [0.8, 0.74, 0.66],
             ground: [0.74, 0.74, 0.72],
             sun: Vec3::new(0.2, 1.0, 0.4),
+            ground_material: Material::Concrete,
             fog: [35.0, 90.0],
         },
+    }
+}
+
+fn material(m: game::Material) -> Material {
+    match m {
+        game::Material::Plain => Material::Plain,
+        game::Material::Wood => Material::Wood,
+        game::Material::Brick => Material::Brick,
+        game::Material::Plaster => Material::Plaster,
+        game::Material::Concrete => Material::Concrete,
+        game::Material::Asphalt => Material::Asphalt,
+        game::Material::Tile => Material::Tile,
+        game::Material::Grass => Material::Grass,
+        game::Material::Foliage => Material::Foliage,
+        game::Material::Fabric => Material::Fabric,
+        game::Material::Metal => Material::Metal,
+        game::Material::Water => Material::Water,
     }
 }
 
@@ -108,6 +128,7 @@ pub fn scene(
             let c = Vec3::new(p.center.x, p.center.y, p.center.z);
             let size = Vec3::new(p.size.x, p.size.y, p.size.z);
             Instance::new(shape, c, size, 0.0, p.color.map(|v| f32::from(v) / 255.0))
+                .with_material(material(p.material))
         })
         .collect();
     let mut wedges = Vec::new();
@@ -237,19 +258,21 @@ mod tests {
     }
 
     #[test]
-    fn props_become_instances_with_their_colour_and_place() {
+    fn props_become_instances_with_their_colour_material_and_place() {
         let mut world = World::open(SceneKind::Park);
         world.props.push(Prop {
             shape: game::Shape::Cylinder,
             center: game::Vec3::new(1.0, 2.0, 3.0),
             size: game::Vec3::new(0.5, 4.0, 0.5),
             color: [255, 0, 51],
+            material: game::Material::Brick,
         });
         let s = scene(&world, &[], None, &Gaits::default());
         assert_eq!(s.instances.len(), 1);
         let i = s.instances[0];
         assert_eq!(i.shape, Shape::Cylinder);
         assert_eq!(i.color, [1.0, 0.0, 0.2]);
+        assert_eq!(i.material, Material::Brick);
         assert!(centre(&i).abs_diff_eq(Vec3::new(1.0, 2.0, 3.0), 1e-6));
         assert!(s.wedges.is_empty());
     }

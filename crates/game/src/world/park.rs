@@ -1,13 +1,20 @@
 //! Trees with canopies, bushes, hedges, benches, and a pond you cannot wade.
 
-use super::{Aabb2, Builder, HALF_EXTENT, Shape, Vec2, Vec3};
+use super::{Aabb2, Builder, HALF_EXTENT, Material, Paint, Shape, Vec2, Vec3, paint};
 
-const TRUNK: [u8; 3] = [110, 78, 52];
-const LEAVES: [[u8; 3]; 3] = [[58, 128, 60], [74, 142, 58], [46, 110, 70]];
-const BUSH: [[u8; 3]; 2] = [[64, 120, 48], [88, 140, 64]];
-const HEDGE: [u8; 3] = [52, 104, 52];
-const BENCH: [u8; 3] = [150, 104, 64];
-const WATER: [u8; 3] = [70, 130, 190];
+const TRUNK: Paint = paint([110, 78, 52], Material::Wood);
+const LEAVES: [Paint; 3] = [
+    paint([58, 128, 60], Material::Foliage),
+    paint([74, 142, 58], Material::Foliage),
+    paint([46, 110, 70], Material::Foliage),
+];
+const BUSH: [Paint; 2] = [
+    paint([64, 120, 48], Material::Foliage),
+    paint([88, 140, 64], Material::Foliage),
+];
+const HEDGE: Paint = paint([52, 104, 52], Material::Foliage);
+const BENCH: Paint = paint([150, 104, 64], Material::Wood);
+const WATER: Paint = paint([70, 130, 190], Material::Water);
 
 pub(super) fn build(b: &mut Builder) {
     b.perimeter(1.4, HEDGE);
@@ -41,8 +48,8 @@ pub(super) fn build(b: &mut Builder) {
         let r = b.rng.range(0.6, 1.0);
         if let Some(c) = b.place(area, Vec2::new(r, r), 1.2) {
             let h = b.rng.range(0.9, 1.2);
-            let color = b.pick(&BUSH);
-            b.pillar(c, r, h, color);
+            let finish = b.pick(&BUSH);
+            b.pillar(c, r, h, finish);
         }
     }
     for _ in 0..b.count(4, 6) {

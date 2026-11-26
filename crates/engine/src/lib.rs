@@ -21,8 +21,8 @@ pub use headless::{Offscreen, TARGET_FORMAT, write_png};
 
 pub use camera::{FollowCamera, OrbitCamera, View};
 pub use draw::{
-    AVATAR_HEIGHT, Environment, Instance, Pose, SceneDraw, Shape, Wedge, avatar_instances, facing,
-    stride_length,
+    AVATAR_HEIGHT, Environment, Instance, Material, Pose, SceneDraw, Shape, Wedge,
+    avatar_instances, facing, stride_length,
 };
 pub use render::{Output, Renderer};
 

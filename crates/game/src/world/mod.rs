@@ -30,6 +30,24 @@ pub enum Shape {
     Cylinder,
 }
 
+/// What a surface is made of. The renderer draws each as a pattern over
+/// the prop's colour.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Material {
+    Plain,
+    Wood,
+    Brick,
+    Plaster,
+    Concrete,
+    Asphalt,
+    Tile,
+    Grass,
+    Foliage,
+    Fabric,
+    Metal,
+    Water,
+}
+
 /// One drawable. `center` and `size` are world space with Y up. A cylinder's
 /// `size.x` is its diameter. Colours are sRGB.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -38,6 +56,18 @@ pub struct Prop {
     pub center: Vec3,
     pub size: Vec3,
     pub color: [u8; 3],
+    pub material: Material,
+}
+
+/// A colour on a material: how the generators name a finish.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct Paint {
+    color: [u8; 3],
+    material: Material,
+}
+
+const fn paint(color: [u8; 3], material: Material) -> Paint {
+    Paint { color, material }
 }
 
 /// Blocks movement always, and sight and the camera below `height`.
@@ -170,7 +200,7 @@ impl<'a> Builder<'a> {
     }
 
     /// A box that blocks, drawn from the ground to `height`.
-    fn block(&mut self, b: Aabb2, height: f32, color: [u8; 3]) {
+    fn block(&mut self, b: Aabb2, height: f32, paint: Paint) {
         let c = b.center();
         self.solids.push(Solid {
             shape: Footprint::Aabb(b),
@@ -180,12 +210,13 @@ impl<'a> Builder<'a> {
             shape: Shape::Box,
             center: Vec3::new(c.x, height / 2.0, c.y),
             size: Vec3::new(b.max.x - b.min.x, height, b.max.y - b.min.y),
-            color,
+            color: paint.color,
+            material: paint.material,
         });
     }
 
     /// A cylinder that blocks, drawn from the ground to `height`.
-    fn pillar(&mut self, center: Vec2, radius: f32, height: f32, color: [u8; 3]) {
+    fn pillar(&mut self, center: Vec2, radius: f32, height: f32, paint: Paint) {
         self.solids.push(Solid {
             shape: Footprint::Circle { center, radius },
             height,
@@ -194,7 +225,8 @@ impl<'a> Builder<'a> {
             shape: Shape::Cylinder,
             center: Vec3::new(center.x, height / 2.0, center.y),
             size: Vec3::new(radius * 2.0, height, radius * 2.0),
-            color,
+            color: paint.color,
+            material: paint.material,
         });
     }
 
@@ -204,12 +236,13 @@ impl<'a> Builder<'a> {
     }
 
     /// Drawn only. Canopies, roofs, shelves above head height.
-    fn deco(&mut self, shape: Shape, center: Vec3, size: Vec3, color: [u8; 3]) {
+    fn deco(&mut self, shape: Shape, center: Vec3, size: Vec3, paint: Paint) {
         self.props.push(Prop {
             shape,
             center,
             size,
-            color,
+            color: paint.color,
+            material: paint.material,
         });
     }
 
@@ -258,7 +291,7 @@ impl<'a> Builder<'a> {
     }
 
     /// Walls just outside the play area, so the camera and sight stop there.
-    fn perimeter(&mut self, height: f32, color: [u8; 3]) {
+    fn perimeter(&mut self, height: f32, paint: Paint) {
         let (h, t) = (HALF_EXTENT, 0.5);
         for b in [
             Aabb2 {
@@ -278,7 +311,7 @@ impl<'a> Builder<'a> {
                 max: Vec2::new(h + t, h),
             },
         ] {
-            self.block(b, height, color);
+            self.block(b, height, paint);
         }
         self.structural();
     }

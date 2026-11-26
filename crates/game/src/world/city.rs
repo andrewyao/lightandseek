@@ -1,18 +1,23 @@
 //! Building blocks on a 3 by 3 street grid, with cars, dumpsters, and bus
 //! stops in the streets.
 
-use super::{Aabb2, Builder, HALF_EXTENT, Shape, Vec2, Vec3};
+use super::{Aabb2, Builder, HALF_EXTENT, Material, Paint, Shape, Vec2, Vec3, paint};
 
-const WALL: [[u8; 3]; 4] = [
-    [176, 168, 156],
-    [150, 140, 132],
-    [196, 176, 150],
-    [128, 132, 140],
+const WALL: [Paint; 4] = [
+    paint([176, 168, 156], Material::Concrete),
+    paint([150, 140, 132], Material::Brick),
+    paint([196, 176, 150], Material::Plaster),
+    paint([128, 132, 140], Material::Concrete),
 ];
-const CAR: [[u8; 3]; 4] = [[200, 60, 50], [50, 90, 170], [230, 200, 70], [90, 90, 96]];
-const DUMPSTER: [u8; 3] = [40, 100, 60];
-const SHELTER: [u8; 3] = [120, 150, 170];
-const FENCE: [u8; 3] = [120, 120, 124];
+const CAR: [Paint; 4] = [
+    paint([200, 60, 50], Material::Metal),
+    paint([50, 90, 170], Material::Metal),
+    paint([230, 200, 70], Material::Metal),
+    paint([90, 90, 96], Material::Metal),
+];
+const DUMPSTER: Paint = paint([40, 100, 60], Material::Metal);
+const SHELTER: Paint = paint([120, 150, 170], Material::Metal);
+const FENCE: Paint = paint([120, 120, 124], Material::Concrete);
 
 const BLOCK_CENTERS: [f32; 3] = [-13.0, 0.0, 13.0];
 const BLOCK_HALF: f32 = 4.5;
@@ -29,14 +34,14 @@ pub(super) fn build(b: &mut Builder) {
     for _ in 0..b.count(6, 10) {
         let half = b.oriented(1.9, 0.9);
         if let Some(c) = b.place(area, half, 1.0) {
-            let color = b.pick(&CAR);
-            b.block(Aabb2::centered(c, half), 0.8, color);
+            let finish = b.pick(&CAR);
+            b.block(Aabb2::centered(c, half), 0.8, finish);
             let cabin = Vec2::new(half.x * 0.8, half.y * 0.8);
             b.deco(
                 Shape::Box,
                 Vec3::new(c.x, 1.0, c.y),
                 Vec3::new(cabin.x * 1.4, 0.4, cabin.y * 1.4),
-                color,
+                finish,
             );
         }
     }
@@ -97,7 +102,7 @@ fn building_lot(b: &mut Builder, lot: Aabb2) {
     }
     for part in parts {
         let h = b.rng.range(4.0, 10.0);
-        let color = b.pick(&WALL);
-        b.block(part, h, color);
+        let finish = b.pick(&WALL);
+        b.block(part, h, finish);
     }
 }

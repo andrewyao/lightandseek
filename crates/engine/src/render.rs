@@ -33,7 +33,7 @@ struct Globals {
     fog: [f32; 4],
 }
 
-/// Model matrix columns, then linear colour.
+/// Model matrix columns, then linear colour with the material id in w.
 type GpuInstance = [f32; 20];
 /// Apex and yaw, half angle and radius, then linear colour with alpha.
 type GpuWedge = [f32; 12];
@@ -274,8 +274,7 @@ impl Renderer {
         });
         let ground = pipeline("ground", "vs_ground", "fs_ground", &[], None, true);
         let fan_attrs = wgpu::vertex_attr_array![0 => Float32x2];
-        let wedge_attrs =
-            wgpu::vertex_attr_array![1 => Float32x4, 2 => Float32x4, 3 => Float32x4];
+        let wedge_attrs = wgpu::vertex_attr_array![1 => Float32x4, 2 => Float32x4, 3 => Float32x4];
         let wedge = pipeline(
             "wedge",
             "vs_wedge",
@@ -296,23 +295,22 @@ impl Renderer {
             false,
         );
 
-        let meshes = Shape::ALL
-            .map(|shape| {
-                let data = mesh::build(shape);
-                Mesh {
-                    vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("mesh vertices"),
-                        contents: bytemuck::cast_slice(&data.vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }),
-                    indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("mesh indices"),
-                        contents: bytemuck::cast_slice(&data.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    }),
-                    count: data.indices.len() as u32,
-                }
-            });
+        let meshes = Shape::ALL.map(|shape| {
+            let data = mesh::build(shape);
+            Mesh {
+                vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh vertices"),
+                    contents: bytemuck::cast_slice(&data.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }),
+                indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh indices"),
+                    contents: bytemuck::cast_slice(&data.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
+                count: data.indices.len() as u32,
+            }
+        });
         let fan: Vec<[f32; 2]> = (0..FAN_SEGMENTS)
             .flat_map(|i| {
                 let (a, b) = (
@@ -365,7 +363,7 @@ impl Renderer {
             eye: view.eye.extend(1.0).into(),
             sun: env.sun.normalize_or(glam::Vec3::Y).extend(0.0).into(),
             sky: [sky[0], sky[1], sky[2], 1.0],
-            ground: linear4(env.ground, 1.0),
+            ground: linear4(env.ground, env.ground_material.id()),
             fog: [
                 env.fog[0],
                 env.fog[1].max(env.fog[0] + 1e-3),
@@ -389,13 +387,19 @@ impl Renderer {
                     .map(|i| {
                         let mut v = [0.0; 20];
                         v[..16].copy_from_slice(&i.model.to_cols_array());
-                        v[16..].copy_from_slice(&linear4(i.color, 1.0));
+                        v[16..].copy_from_slice(&linear4(i.color, i.material.id()));
                         v
                     }),
             );
             *run = (self.staging.len() - before) as u32;
         }
-        upload(device, queue, &mut self.instances, "instances", &self.staging);
+        upload(
+            device,
+            queue,
+            &mut self.instances,
+            "instances",
+            &self.staging,
+        );
         let wedges: Vec<GpuWedge> = scene
             .wedges
             .iter()
@@ -419,7 +423,11 @@ impl Renderer {
             .collect();
         upload(device, queue, &mut self.wedges, "wedges", &wedges);
 
-        if self.depth.as_ref().is_none_or(|(_, size)| *size != out.size) {
+        if self
+            .depth
+            .as_ref()
+            .is_none_or(|(_, size)| *size != out.size)
+        {
             self.depth = Some((depth_view(device, out.size), out.size));
         }
         let mut casters = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -524,7 +532,11 @@ fn shadow_focus(view: &View) -> Vec3 {
 /// camera slides the map without making shadow edges crawl.
 fn sun_view_proj(view: &View, sun: Vec3) -> Mat4 {
     let toward = sun.normalize_or(Vec3::Y);
-    let up = if toward.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+    let up = if toward.y.abs() > 0.99 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
     let light = glam::camera::rh::view::look_to_mat4(Vec3::ZERO, -toward, up);
     let c = light.transform_point3(shadow_focus(view));
     let texel = 2.0 * SHADOW_HALF / SHADOW_RES as f32;

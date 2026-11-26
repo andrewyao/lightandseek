@@ -3,7 +3,7 @@
 use std::f32::consts::{FRAC_PI_6, PI};
 
 use engine::{
-    Environment, Instance, Offscreen, OrbitCamera, Pose, SceneDraw, Shape, View, Wedge,
+    Environment, Instance, Material, Offscreen, OrbitCamera, Pose, SceneDraw, Shape, View, Wedge,
     avatar_instances,
 };
 use glam::Vec3;
@@ -62,7 +62,10 @@ fn a_box_in_front_of_an_avatar_hides_it() {
     assert_eq!(seen, pixel(&wall_only, &view, body));
     assert_ne!(seen, pixel(&avatar_only, &view, body));
     let [r, _, b] = seen;
-    assert!(r > b, "the wall's red shows, not the avatar's blue: {seen:?}");
+    assert!(
+        r > b,
+        "the wall's red shows, not the avatar's blue: {seen:?}"
+    );
 }
 
 #[test]
@@ -91,7 +94,11 @@ fn the_visor_shows_only_when_the_avatar_faces_the_camera() {
     let visor = pixel(&toward, &view, head);
     assert!(visor.iter().all(|&c| c < 60), "dark visor: {visor:?}");
     let [r, g, b] = pixel(&away, &view, head);
-    assert!(b > 120 && b > r && b > g, "the back of a blue head: {:?}", [r, g, b]);
+    assert!(
+        b > 120 && b > r && b > g,
+        "the back of a blue head: {:?}",
+        [r, g, b]
+    );
 }
 
 #[test]
@@ -154,4 +161,44 @@ fn a_tall_box_shades_the_ground_away_from_the_sun_and_only_there() {
         "the shadow darkens the ground: {dark:?} vs {bare:?}"
     );
     assert_eq!(pixel(&with, &view, sunlit), pixel(&without, &view, sunlit));
+}
+
+#[test]
+fn a_brick_wall_varies_across_its_face_where_a_plain_one_does_not() {
+    let mut off = Offscreen::new(SIZE).unwrap();
+    let mut cam = OrbitCamera::new(Vec3::new(0.0, 1.0, 0.0));
+    cam.yaw = PI;
+    cam.pitch = 0.0;
+    // Near enough that a mortar joint spans about a pixel.
+    cam.distance = 1.2;
+    let view = cam.view(off.aspect());
+    let wall = Instance::new(
+        Shape::Box,
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(3.0, 2.0, 0.2),
+        0.0,
+        [0.6, 0.3, 0.2],
+    );
+    // A band across the middle of the face the camera sees.
+    let spread = |rgba: &[u8]| {
+        let lum: Vec<f32> = (0..40)
+            .map(|i| {
+                let p = Vec3::new(-0.6 + 0.03 * i as f32, 0.8 + 0.01 * i as f32, 0.1);
+                let [r, g, b] = pixel(rgba, &view, p);
+                f32::from(r) + f32::from(g) + f32::from(b)
+            })
+            .collect();
+        let mean = lum.iter().sum::<f32>() / lum.len() as f32;
+        lum.iter().map(|l| (l - mean).abs()).sum::<f32>() / lum.len() as f32
+    };
+
+    let plain = spread(&render(&mut off, &view, &[wall], &[]));
+    let brick = spread(&render(
+        &mut off,
+        &view,
+        &[wall.with_material(Material::Brick)],
+        &[],
+    ));
+    assert!(plain < 2.0, "a plain face is flat: {plain}");
+    assert!(brick > 10.0, "bricks and mortar vary: {brick}");
 }

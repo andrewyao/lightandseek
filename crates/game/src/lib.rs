@@ -36,4 +36,4 @@ pub use model::{
 };
 pub use replica::{AvatarView, Event, Replica, ViewState};
 pub use wire::{Frame, WireError};
-pub use world::{Prop, Shape, Solid, World};
+pub use world::{Material, Prop, Shape, Solid, World};
