@@ -3,6 +3,8 @@
 
 struct Globals {
     view_proj: mat4x4<f32>,
+    // World to the shadow map's clip space.
+    sun_view_proj: mat4x4<f32>,
     eye: vec4<f32>,
     // Unit vector toward the sun.
     sun: vec4<f32>,
@@ -13,10 +15,15 @@ struct Globals {
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
+@group(1) @binding(0) var shadow_map: texture_depth_2d;
+@group(1) @binding(1) var shadow_sampler: sampler_comparison;
 
 const SUN_COLOR: vec3<f32> = vec3<f32>(1.0, 0.95, 0.86);
 const GROUND_HALF: f32 = 400.0;
 const WEDGE_LIFT: f32 = 0.02;
+// One shadow texel: SHADOW_HALF and SHADOW_RES in render.rs make the map
+// 80 u across in 2048 texels.
+const SHADOW_TEXEL: f32 = 80.0 / 2048.0;
 
 struct Lit {
     @builtin(position) clip: vec4<f32>,
@@ -48,6 +55,21 @@ fn vs_solid(
     return out;
 }
 
+// The instance as the sun sees it, for the shadow map.
+@vertex
+fn vs_shadow(
+    @location(0) pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) m0: vec4<f32>,
+    @location(3) m1: vec4<f32>,
+    @location(4) m2: vec4<f32>,
+    @location(5) m3: vec4<f32>,
+    @location(6) color: vec4<f32>,
+) -> @builtin(position) vec4<f32> {
+    let m = mat4x4<f32>(m0, m1, m2, m3);
+    return g.sun_view_proj * m * vec4<f32>(pos, 1.0);
+}
+
 // A square under the eye, big enough that fog hides its edge.
 @vertex
 fn vs_ground(@builtin(vertex_index) i: u32) -> Lit {
@@ -65,8 +87,27 @@ fn vs_ground(@builtin(vertex_index) i: u32) -> Lit {
     return out;
 }
 
-fn light(base: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
-    let sun = max(dot(n, g.sun.xyz), 0.0) * SUN_COLOR;
+// How much sun reaches `world`: 1 in full light, 0 in shadow. Points
+// outside the map are lit. Pushing the point out along its normal keeps a
+// surface from shadowing itself.
+fn sunlight(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    let p = g.sun_view_proj * vec4<f32>(world + n * (1.5 * SHADOW_TEXEL), 1.0);
+    let uv = vec2<f32>(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+    // Each tap blends 2x2 texels; spreading four of them a texel apart
+    // softens edges over about four texels.
+    let d = 1.0 / 2048.0;
+    var lit = 0.0;
+    for (var i = 0; i < 4; i++) {
+        let o = vec2<f32>(f32(i & 1) - 0.5, f32(i >> 1u) - 0.5) * 2.0 * d;
+        lit += textureSampleCompareLevel(shadow_map, shadow_sampler, uv + o, p.z);
+    }
+    let inside = all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) && p.z <= 1.0;
+    return select(1.0, lit * 0.25, inside);
+}
+
+fn light(base: vec3<f32>, n: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+    let facing = max(dot(n, g.sun.xyz), 0.0);
+    let sun = facing * sunlight(world, n) * SUN_COLOR;
     let hemi = mix(g.ground.rgb * 0.5, g.sky.rgb * 0.6, n.y * 0.5 + 0.5);
     return base * (hemi + sun);
 }
@@ -87,7 +128,7 @@ fn finish(c: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_lit(in: Lit) -> @location(0) vec4<f32> {
-    return vec4<f32>(finish(light(in.color, normalize(in.normal)), in.world), 1.0);
+    return vec4<f32>(finish(light(in.color, normalize(in.normal), in.world), in.world), 1.0);
 }
 
 // Faint 2 u checks, so motion over open ground reads.
@@ -96,7 +137,7 @@ fn fs_ground(in: Lit) -> @location(0) vec4<f32> {
     let cell = floor(in.world.xz / 2.0);
     let odd = abs(cell.x + cell.y) % 2.0;
     let base = in.color * (1.0 - 0.06 * odd);
-    return vec4<f32>(finish(light(base, in.normal), in.world), 1.0);
+    return vec4<f32>(finish(light(base, in.normal, in.world), in.world), 1.0);
 }
 
 struct Fan {

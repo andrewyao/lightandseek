@@ -123,3 +123,35 @@ fn a_wedge_tints_the_ground_it_opens_toward_and_nothing_behind() {
         assert_eq!(pixel(&with, &view, p), pixel(&without, &view, p), "{p}");
     }
 }
+
+#[test]
+fn a_tall_box_shades_the_ground_away_from_the_sun_and_only_there() {
+    let mut off = Offscreen::new(SIZE).unwrap();
+    let mut cam = OrbitCamera::new(Vec3::ZERO);
+    cam.pitch = 1.2;
+    cam.distance = 9.0;
+    let view = cam.view(off.aspect());
+    let tower = Instance::new(
+        Shape::Box,
+        Vec3::new(0.0, 1.5, 0.0),
+        Vec3::new(1.0, 3.0, 1.0),
+        0.0,
+        RED,
+    );
+    // The default sun is (0.45, 1, 0.3): the tower's shadow falls toward
+    // -x, -z, reaching (-1.35, 0, -0.9) from its top.
+    let shaded = Vec3::new(-0.9, 0.0, -0.6);
+    let sunlit = Vec3::new(1.5, 0.0, -0.5);
+
+    let with = render(&mut off, &view, &[tower], &[]);
+    let without = render(&mut off, &view, &[], &[]);
+
+    let dark = pixel(&with, &view, shaded);
+    let bare = pixel(&without, &view, shaded);
+    let sum = |c: [u8; 3]| c.iter().map(|&v| u32::from(v)).sum::<u32>();
+    assert!(
+        sum(dark) * 10 < sum(bare) * 8,
+        "the shadow darkens the ground: {dark:?} vs {bare:?}"
+    );
+    assert_eq!(pixel(&with, &view, sunlit), pixel(&without, &view, sunlit));
+}
