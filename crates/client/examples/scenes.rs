@@ -6,13 +6,17 @@
 use std::path::PathBuf;
 
 use client::draw;
-use engine::{Offscreen, OrbitCamera, write_png};
+use client::gait::Gaits;
+use engine::{Offscreen, OrbitCamera, Pose, write_png};
 use game::geom::yaw_toward;
 use game::{AvatarView, Body, Control, PlayerId, Role, SceneKind, Status, World};
 use glam::Vec3;
 
 const SIZE: [u32; 2] = [960, 600];
 const SEED: u64 = 11;
+/// Phase and stride for each placed avatar in turn: the seeker mid-run,
+/// then hiders running, walking, and standing.
+const POSES: [(f32, f32); 4] = [(1.6, 1.0), (4.6, 1.0), (0.9, 0.5), (0.0, 0.0)];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::args()
@@ -22,7 +26,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for kind in SceneKind::ALL {
         let world = World::generate(kind, SEED);
         let avatars = place(&world);
-        let scene = draw::scene(&world, &avatars, None);
+        let gaits: Gaits = avatars
+            .iter()
+            .zip(POSES)
+            .map(|(a, (phase, stride))| (a.id, Pose { phase, stride }))
+            .collect();
+        let scene = draw::scene(&world, &avatars, None, &gaits);
 
         let mut top = OrbitCamera::new(Vec3::ZERO);
         top.pitch = 0.95;

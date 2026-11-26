@@ -10,6 +10,8 @@ use game::rules::{CATCH_DIST, CATCH_HALF_ANGLE};
 use game::{AvatarView, PlayerId, Role, SceneKind, Status, Vec2, ViewState, World};
 use glam::Vec3;
 
+use crate::gait::Gaits;
+
 pub const SEEKER: [f32; 3] = [0.9, 0.16, 0.12];
 const WEDGE: [f32; 4] = [0.95, 0.05, 0.05, 0.8];
 
@@ -86,9 +88,15 @@ pub fn avatars(view: &ViewState<'_>) -> Vec<AvatarView> {
     view.me.iter().chain(&view.others).copied().collect()
 }
 
-/// `world` with `avatars` standing in it. Caught players are not drawn, and
-/// neither is `hidden`'s figure, though a seeker's wedge still is.
-pub fn scene(world: &World, avatars: &[AvatarView], hidden: Option<PlayerId>) -> Scene {
+/// `world` with `avatars` standing in it, each mid-stride as `gaits` has
+/// it. Caught players are not drawn, and neither is `hidden`'s figure,
+/// though a seeker's wedge still is.
+pub fn scene(
+    world: &World,
+    avatars: &[AvatarView],
+    hidden: Option<PlayerId>,
+    gaits: &Gaits,
+) -> Scene {
     let mut instances: Vec<Instance> = world
         .props
         .iter()
@@ -106,7 +114,12 @@ pub fn scene(world: &World, avatars: &[AvatarView], hidden: Option<PlayerId>) ->
     for a in avatars.iter().filter(|a| a.status == Status::Active) {
         let feet = ground(a.body.pos);
         if hidden != Some(a.id) {
-            instances.extend(avatar_instances(feet, a.body.yaw, color(a.id, a.role)));
+            instances.extend(avatar_instances(
+                feet,
+                a.body.yaw,
+                color(a.id, a.role),
+                gaits.pose(a.id),
+            ));
         }
         if a.role == Role::Seeker {
             wedges.push(Wedge {
@@ -194,11 +207,12 @@ pub fn shot(
     zoom: Zoom,
     own: Option<PlayerId>,
     aspect: f32,
+    gaits: &Gaits,
 ) -> (View, Scene) {
     let hidden = own.filter(|_| zoom.distance < engine::camera::CLOSE);
     (
         cam.view_at(zoom.distance, aspect),
-        scene(world, avatars, hidden),
+        scene(world, avatars, hidden, gaits),
     )
 }
 
@@ -231,7 +245,7 @@ mod tests {
             size: game::Vec3::new(0.5, 4.0, 0.5),
             color: [255, 0, 51],
         });
-        let s = scene(&world, &[], None);
+        let s = scene(&world, &[], None, &Gaits::default());
         assert_eq!(s.instances.len(), 1);
         let i = s.instances[0];
         assert_eq!(i.shape, Shape::Cylinder);
@@ -246,12 +260,13 @@ mod tests {
         let seeker = avatar(1, Role::Seeker, Status::Active, Vec2::new(2.0, -1.0));
         let hider = avatar(2, Role::Hider, Status::Active, Vec2::new(5.0, 5.0));
         let caught = avatar(3, Role::Hider, Status::Caught, Vec2::new(-5.0, 0.0));
-        let s = scene(&world, &[seeker, hider, caught], None);
+        let s = scene(&world, &[seeker, hider, caught], None, &Gaits::default());
+        let parts = avatar_instances(Vec3::ZERO, 0.0, SEEKER, engine::Pose::default()).len();
 
-        assert_eq!(s.instances.len(), 6, "two figures of three shapes");
+        assert_eq!(s.instances.len(), 2 * parts, "two figures");
         assert_eq!(s.instances[0].color, SEEKER);
         assert!(centre(&s.instances[0]).x == 2.0 && centre(&s.instances[0]).z == -1.0);
-        assert_ne!(s.instances[3].color, SEEKER);
+        assert_ne!(s.instances[parts].color, SEEKER);
         assert!(
             s.instances.iter().all(|i| centre(i).x > -4.0),
             "no caught figure"
@@ -343,7 +358,15 @@ mod tests {
         for gap in [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0] {
             let world = backed_against_a_wall(gap);
             let zoom = Zoom::next(None, free_distance(&world, &cam), 0.0);
-            let (view, scene) = shot(&world, &[me], &cam, zoom, Some(me.id), 1.6);
+            let (view, scene) = shot(
+                &world,
+                &[me],
+                &cam,
+                zoom,
+                Some(me.id),
+                1.6,
+                &Gaits::default(),
+            );
             assert!(view.eye.z > -gap, "gap {gap}: eye {} in the wall", view.eye);
             assert_eq!(scene.wedges.len(), 1, "gap {gap}: your wedge still shows");
             if let Some(size) = head_size(&view, &scene) {

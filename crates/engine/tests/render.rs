@@ -3,7 +3,7 @@
 use std::f32::consts::{FRAC_PI_6, PI};
 
 use engine::{
-    Environment, Instance, Offscreen, OrbitCamera, SceneDraw, Shape, View, Wedge,
+    Environment, Instance, Offscreen, OrbitCamera, Pose, SceneDraw, Shape, View, Wedge,
     avatar_instances,
 };
 use glam::Vec3;
@@ -42,7 +42,7 @@ fn pixel(rgba: &[u8], view: &View, p: Vec3) -> [u8; 3] {
 fn a_box_in_front_of_an_avatar_hides_it() {
     let mut off = Offscreen::new(SIZE).unwrap();
     let view = camera(&off);
-    let avatar = avatar_instances(Vec3::ZERO, 0.0, BLUE);
+    let avatar = avatar_instances(Vec3::ZERO, 0.0, BLUE, Pose::default());
     // Boxes draw before capsules and spheres, so only the depth test can
     // keep the avatar behind this one.
     let wall = Instance::new(
@@ -54,7 +54,7 @@ fn a_box_in_front_of_an_avatar_hides_it() {
     );
     let body = Vec3::new(0.0, 0.4, 0.0);
 
-    let both = render(&mut off, &view, &[avatar[0], avatar[1], avatar[2], wall], &[]);
+    let both = render(&mut off, &view, &[&avatar[..], &[wall]].concat(), &[]);
     let wall_only = render(&mut off, &view, &[wall], &[]);
     let avatar_only = render(&mut off, &view, &avatar, &[]);
 
@@ -75,8 +75,18 @@ fn the_visor_shows_only_when_the_avatar_faces_the_camera() {
     cam.distance = 2.5;
     let view = cam.view(off.aspect());
     // The camera sits on +Z; yaw 0 faces it.
-    let toward = render(&mut off, &view, &avatar_instances(Vec3::ZERO, 0.0, BLUE), &[]);
-    let away = render(&mut off, &view, &avatar_instances(Vec3::ZERO, PI, BLUE), &[]);
+    let toward = render(
+        &mut off,
+        &view,
+        &avatar_instances(Vec3::ZERO, 0.0, BLUE, Pose::default()),
+        &[],
+    );
+    let away = render(
+        &mut off,
+        &view,
+        &avatar_instances(Vec3::ZERO, PI, BLUE, Pose::default()),
+        &[],
+    );
 
     let visor = pixel(&toward, &view, head);
     assert!(visor.iter().all(|&c| c < 60), "dark visor: {visor:?}");

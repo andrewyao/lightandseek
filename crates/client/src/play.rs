@@ -10,6 +10,7 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use client::draw;
+use client::gait::Gaits;
 use client::input::{Controls, Ticker};
 use client::ui::{self, Camera, Hud, Screen};
 use game::{Event, LobbyConfig, Phase, Vec2};
@@ -90,6 +91,7 @@ pub struct Play {
     pub orbit_yaw: f32,
     /// Last frame's camera distance; None restarts it at its full reach.
     zoom: Option<draw::Zoom>,
+    gaits: Gaits,
     /// Turn the controls to face the avatar's spawn once it appears.
     align: bool,
     pub gpu: Option<engine::Gpu>,
@@ -109,6 +111,7 @@ impl Play {
             camera: Camera::Follow,
             orbit_yaw: 0.0,
             zoom: None,
+            gaits: Gaits::default(),
             align: true,
             gpu: None,
             gpu_status: "starting".into(),
@@ -192,6 +195,7 @@ impl Play {
             return;
         }
         let avatars = draw::avatars(&view);
+        self.gaits.update(&avatars, now);
         let mode = self.camera.resolve(&view);
         let cam = match mode {
             Camera::Follow => view
@@ -206,7 +210,7 @@ impl Play {
         let zoom = draw::Zoom::next(self.zoom, draw::free_distance(world, &cam), now);
         self.zoom = Some(zoom);
         let own = view.me.filter(|_| mode == Camera::Follow).map(|me| me.id);
-        let (camera, scene) = draw::shot(world, &avatars, &cam, zoom, own, aspect);
+        let (camera, scene) = draw::shot(world, &avatars, &cam, zoom, own, aspect, &self.gaits);
         gpu.draw(&camera, &scene.draw());
     }
 

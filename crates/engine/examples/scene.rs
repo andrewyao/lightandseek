@@ -6,7 +6,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_6, PI};
 use std::path::PathBuf;
 
 use engine::{
-    Environment, Instance, Offscreen, OrbitCamera, SceneDraw, Shape, Wedge, avatar_instances,
+    Environment, Instance, Offscreen, OrbitCamera, Pose, SceneDraw, Shape, Wedge, avatar_instances,
     write_png,
 };
 use glam::Vec3;
@@ -43,15 +43,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             [0.3, 0.55, 0.25],
         ));
     }
-    // The seeker faces the camera, one hider is side-on, and one faces away
-    // with the counter hiding its lower half.
+    // The seeker stands facing the camera, one hider runs side-on, and one
+    // walks away with the counter hiding its lower half.
     let seeker = (Vec3::new(0.0, 0.0, -1.0), 0.0);
-    for ((feet, yaw), color) in [
-        (seeker, [0.9, 0.2, 0.18]),
-        ((Vec3::new(2.4, 0.0, 0.2), FRAC_PI_2), [0.25, 0.45, 0.95]),
-        ((Vec3::new(-0.8, 0.0, 2.5), PI), [0.95, 0.8, 0.2]),
+    let running = Pose {
+        phase: FRAC_PI_2,
+        stride: 1.0,
+    };
+    let walking = Pose {
+        phase: 2.0,
+        stride: 0.5,
+    };
+    for ((feet, yaw), color, pose) in [
+        (seeker, [0.9, 0.2, 0.18], Pose::default()),
+        (
+            (Vec3::new(2.4, 0.0, 0.2), FRAC_PI_2),
+            [0.25, 0.45, 0.95],
+            running,
+        ),
+        ((Vec3::new(-0.8, 0.0, 2.5), PI), [0.95, 0.8, 0.2], walking),
     ] {
-        instances.extend(avatar_instances(feet, yaw, color));
+        instances.extend(avatar_instances(feet, yaw, color, pose));
     }
     let wedges = [Wedge {
         center: seeker.0,
