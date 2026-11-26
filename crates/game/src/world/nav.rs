@@ -107,6 +107,7 @@ impl NavGrid {
         center_of(self.min, self.n, i)
     }
 
+    #[cfg(test)]
     pub fn cell(&self, p: Vec2) -> Option<usize> {
         let x = ((p.x - self.min.x) / CELL).floor();
         let y = ((p.y - self.min.y) / CELL).floor();
@@ -114,6 +115,7 @@ impl NavGrid {
         (x >= 0.0 && y >= 0.0 && x < n && y < n).then(|| y as usize * self.n + x as usize)
     }
 
+    #[cfg(test)]
     pub fn in_largest(&self, p: Vec2) -> bool {
         self.cell(p).is_some_and(|i| self.label[i] == self.largest)
     }

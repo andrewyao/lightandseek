@@ -13,17 +13,17 @@
 //! test. No tokio, no wasm-bindgen, no clock, no OS randomness: the shell
 //! passes the seed in and calls `Room::tick` every 50 ms.
 
+mod authority;
+mod bots;
 pub mod geom;
 mod model;
 pub mod physics;
-#[allow(dead_code)]
 mod rng;
 pub mod rules;
-#[allow(dead_code)] // used by Room and Replica in the next commit
 mod wire;
-#[allow(dead_code)] // the nav queries serve bots in the next commit
 mod world;
 
+pub use authority::{Room, Step, To};
 pub use geom::{Aabb2, Footprint, Vec2, Vec3};
 pub use model::{
     AvatarState, Body, ConnId, Control, Input, Link, LobbyConfig, Member, Phase, PlayerId, Refusal,
