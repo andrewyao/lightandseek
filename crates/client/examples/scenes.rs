@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for kind in SceneKind::ALL {
         let world = World::generate(kind, SEED);
         let avatars = place(&world);
-        let scene = draw::scene(&world, &avatars);
+        let scene = draw::scene(&world, &avatars, None);
 
         let mut top = OrbitCamera::new(Vec3::ZERO);
         top.pitch = 0.95;
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ("top", top.view(off.aspect())),
             (
                 "follow",
-                draw::follow(&world, seeker.pos, seeker.yaw, off.aspect()),
+                draw::clipped(&world, draw::follow(seeker.pos, seeker.yaw), off.aspect()),
             ),
         ] {
             let path = dir.join(format!("scene-{kind:?}-{name}.png").to_lowercase());

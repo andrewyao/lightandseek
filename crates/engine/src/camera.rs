@@ -13,6 +13,18 @@ pub const PIVOT_HEIGHT: f32 = 1.1;
 /// The follow camera stops this short of whatever `clip` hits.
 const CLIP_MARGIN: f32 = 0.25;
 const PITCH_LIMIT: f32 = 1.45;
+/// The pitch a follow camera swings up to as a wall pulls it in. Steeper
+/// clears more low cover, but stares at the floor.
+const SWING_PITCH: f32 = 0.75;
+/// Nearer the pivot than this, a follow camera's own target would fill the
+/// bottom of the picture, so callers should not draw it. The swing peaks
+/// here and eases back to the base pitch below it: with the target hidden
+/// the eye is in effect its eyes, and should look ahead, not at the floor.
+pub const CLOSE: f32 = 1.5;
+/// Distances `free_distance` tries on the way in, then halvings between the
+/// last blocked one and the first clear one.
+const SCAN_STEPS: u32 = 24;
+const REFINE_STEPS: u32 = 6;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct View {
@@ -87,21 +99,64 @@ impl FollowCamera {
     }
 
     pub fn view(&self, aspect: f32) -> View {
-        self.view_clipped(aspect, |_, _| f32::INFINITY)
+        self.view_at(self.distance, aspect)
     }
 
-    /// `view`, pulled in toward the pivot so the eye stays in front of any
-    /// wall between them. `clip(from, to)` returns how far from `from` the
-    /// segment first hits something solid, or anything at least its length
-    /// when it is clear.
-    pub fn view_clipped(&self, aspect: f32, clip: impl Fn(Vec3, Vec3) -> f32) -> View {
+    /// The view with the eye `distance` from the pivot. Short of the full
+    /// distance the eye swings up and over the target rather than sliding
+    /// straight in at head height.
+    pub fn view_at(&self, distance: f32, aspect: f32) -> View {
+        let dir = self.dir_at(distance);
+        View::look_to(self.pivot() - dir * distance, dir, aspect)
+    }
+
+    /// The furthest the eye can sit from the pivot, up to `distance`, with
+    /// nothing solid between them. `clip(from, to)` returns how far from
+    /// `from` the segment first hits something solid, or anything at least
+    /// its length when it is clear.
+    pub fn free_distance(&self, clip: impl Fn(Vec3, Vec3) -> f32) -> f32 {
         let pivot = self.pivot();
-        let dir = look_dir(self.yaw, self.pitch.clamp(-PITCH_LIMIT, PITCH_LIMIT));
-        let hit = clip(pivot, pivot - dir * self.distance).max(0.0);
-        // Up against a wall the margin would push the eye through to the
-        // pivot's far side; half the gap keeps it in front.
-        let distance = self.distance.min((hit - CLIP_MARGIN).max(hit / 2.0));
-        View::look_to(pivot - dir * distance, dir, aspect)
+        let clear = |d: f32| {
+            let reach = d + CLIP_MARGIN;
+            clip(pivot, pivot - self.dir_at(d) * reach) >= reach
+        };
+        let mut blocked = self.distance;
+        for i in 0..=SCAN_STEPS {
+            let d = self.distance * (1.0 - i as f32 / SCAN_STEPS as f32);
+            if !clear(d) {
+                blocked = d;
+                continue;
+            }
+            if i == 0 {
+                return d;
+            }
+            let mut ok = d;
+            for _ in 0..REFINE_STEPS {
+                let mid = (ok + blocked) / 2.0;
+                if clear(mid) {
+                    ok = mid;
+                } else {
+                    blocked = mid;
+                }
+            }
+            return ok;
+        }
+        // Closer to a wall than the margin: half the gap keeps the eye on
+        // this side of it.
+        let dir = self.dir_at(0.0);
+        clip(pivot, pivot - dir * CLIP_MARGIN).max(0.0) / 2.0
+    }
+
+    fn dir_at(&self, distance: f32) -> Vec3 {
+        let base = self.pitch.clamp(-PITCH_LIMIT, PITCH_LIMIT);
+        let t = if distance < CLOSE {
+            distance / CLOSE
+        } else {
+            (self.distance - distance) / (self.distance - CLOSE).max(1e-3)
+        };
+        let t = t.clamp(0.0, 1.0);
+        let swing = t * t * (3.0 - 2.0 * t);
+        look_dir(self.yaw, base + (SWING_PITCH.max(base) - base) * swing)
     }
 }
 
@@ -169,21 +224,56 @@ mod tests {
                 f32::INFINITY
             }
         };
-        let v = cam.view_clipped(1.0, wall);
+        let v = cam.view_at(cam.free_distance(wall), 1.0);
         assert!(v.eye.z > -2.0, "eye {} stays on the target's side", v.eye);
         assert!(v.eye.distance(cam.pivot()) < cam.distance);
-        assert_eq!(cam.view_clipped(1.0, |_, _| 100.0), cam.view(1.0));
+        assert_eq!(cam.free_distance(|_, _| 100.0), cam.distance);
     }
 
     #[test]
     fn a_wall_right_behind_the_target_still_keeps_the_eye_in_front_of_it() {
         let cam = FollowCamera::new(Vec3::ZERO, 0.0);
         for gap in [0.3, 0.05, 0.0] {
-            let v = cam.view_clipped(1.0, |_, _| gap);
+            let v = cam.view_at(cam.free_distance(|_, _| gap), 1.0);
             let d = v.eye.distance(cam.pivot());
             assert!(d <= gap, "gap {gap}: eye {d} from the pivot");
             assert!(v.view.is_finite(), "gap {gap}");
         }
+    }
+
+    #[test]
+    fn a_low_wall_behind_the_target_is_looked_over_rather_than_clipped_to() {
+        let cam = FollowCamera::new(Vec3::ZERO, 0.0);
+        // Chest-high to the eye: z in [-1.4, -1.0], 1.6 tall, behind a
+        // target facing +Z.
+        let solid = |p: Vec3| (-1.4..=-1.0).contains(&p.z) && p.y < 1.6;
+        let wall = |from: Vec3, to: Vec3| {
+            let n = 400;
+            (0..=n)
+                .map(|i| i as f32 / n as f32)
+                .find(|&t| solid(from.lerp(to, t)))
+                .map_or(f32::INFINITY, |t| t * from.distance(to))
+        };
+        let straight_in = 1.0 / cam.pitch.cos() - CLIP_MARGIN;
+        let d = cam.free_distance(wall);
+        let eye = cam.view_at(d, 1.0).eye;
+        assert!(d > 2.0 * straight_in, "{d} vs {straight_in} straight in");
+        assert!(eye.z < -1.4 && eye.y > 1.6, "eye {eye} is over the wall");
+    }
+
+    #[test]
+    fn the_eye_swings_up_as_it_comes_in_then_looks_ahead_once_close() {
+        let cam = FollowCamera::new(Vec3::ZERO, 0.0);
+        let pitch = |d: f32| {
+            let v = cam.view_at(d, 1.0);
+            let toward = (cam.pivot() - v.eye).normalize();
+            -toward.y.asin()
+        };
+        assert!((pitch(cam.distance) - cam.pitch).abs() < 1e-5);
+        assert!(pitch(2.5) > cam.pitch + 0.15);
+        assert!((pitch(CLOSE) - SWING_PITCH).abs() < 1e-5);
+        assert!(pitch(0.3) < pitch(CLOSE), "looks ahead again once close");
+        assert!((pitch(1e-3) - cam.pitch).abs() < 1e-3);
     }
 
     #[test]

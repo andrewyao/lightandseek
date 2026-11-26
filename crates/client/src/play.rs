@@ -88,6 +88,8 @@ pub struct Play {
     pub camera: Camera,
     /// The spectator camera's turn away from behind its target.
     pub orbit_yaw: f32,
+    /// Last frame's camera distance; None restarts it at its full reach.
+    zoom: Option<draw::Zoom>,
     /// Turn the controls to face the avatar's spawn once it appears.
     align: bool,
     pub gpu: Option<engine::Gpu>,
@@ -106,6 +108,7 @@ impl Play {
             ticker: Ticker::default(),
             camera: Camera::Follow,
             orbit_yaw: 0.0,
+            zoom: None,
             align: true,
             gpu: None,
             gpu_status: "starting".into(),
@@ -130,6 +133,7 @@ impl Play {
             Some(Event::RoundStart) => {
                 self.align = true;
                 self.camera = Camera::Follow;
+                self.zoom = None;
             }
             Some(Event::Caught { hider, .. }) => {
                 let roster = self.session.replica().map(|r| r.view(now).roster.to_vec());
@@ -188,18 +192,21 @@ impl Play {
             return;
         }
         let avatars = draw::avatars(&view);
-        let scene = draw::scene(world, &avatars);
-        let camera = match self.camera.resolve(&view) {
+        let mode = self.camera.resolve(&view);
+        let cam = match mode {
             Camera::Follow => view
                 .me
-                .map(|me| draw::follow(world, me.body.pos, self.controls.intent().1, aspect)),
+                .map(|me| draw::follow(me.body.pos, self.controls.intent().1)),
             Camera::Spectate(id) => avatars
                 .iter()
                 .find(|a| a.id == id)
-                .map(|a| draw::orbit(world, a.body.pos, a.body.yaw + self.orbit_yaw, aspect)),
+                .map(|a| draw::orbit(a.body.pos, a.body.yaw + self.orbit_yaw)),
         };
-        let camera =
-            camera.unwrap_or_else(|| draw::orbit(world, Vec2::ZERO, self.orbit_yaw, aspect));
+        let cam = cam.unwrap_or_else(|| draw::orbit(Vec2::ZERO, self.orbit_yaw));
+        let zoom = draw::Zoom::next(self.zoom, draw::free_distance(world, &cam), now);
+        self.zoom = Some(zoom);
+        let own = view.me.filter(|_| mode == Camera::Follow).map(|me| me.id);
+        let (camera, scene) = draw::shot(world, &avatars, &cam, zoom, own, aspect);
         gpu.draw(&camera, &scene.draw());
     }
 
@@ -222,6 +229,7 @@ impl Play {
     pub fn cycle_camera(&mut self) {
         if let Some(r) = self.session.replica() {
             self.camera = self.camera.cycle(&r.view(now_ms()));
+            self.zoom = None;
         }
     }
 

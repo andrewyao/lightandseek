@@ -86,8 +86,9 @@ pub fn avatars(view: &ViewState<'_>) -> Vec<AvatarView> {
     view.me.iter().chain(&view.others).copied().collect()
 }
 
-/// `world` with `avatars` standing in it. Caught players are not drawn.
-pub fn scene(world: &World, avatars: &[AvatarView]) -> Scene {
+/// `world` with `avatars` standing in it. Caught players are not drawn, and
+/// neither is `hidden`'s figure, though a seeker's wedge still is.
+pub fn scene(world: &World, avatars: &[AvatarView], hidden: Option<PlayerId>) -> Scene {
     let mut instances: Vec<Instance> = world
         .props
         .iter()
@@ -104,7 +105,9 @@ pub fn scene(world: &World, avatars: &[AvatarView]) -> Scene {
     let mut wedges = Vec::new();
     for a in avatars.iter().filter(|a| a.status == Status::Active) {
         let feet = ground(a.body.pos);
-        instances.extend(avatar_instances(feet, a.body.yaw, color(a.id, a.role)));
+        if hidden != Some(a.id) {
+            instances.extend(avatar_instances(feet, a.body.yaw, color(a.id, a.role)));
+        }
         if a.role == Role::Seeker {
             wedges.push(Wedge {
                 center: feet + Vec3::Y * 0.02,
@@ -122,29 +125,81 @@ pub fn scene(world: &World, avatars: &[AvatarView]) -> Scene {
     }
 }
 
-/// Third person behind `feet`, looking along `yaw`, pulled in front of any
-/// solid between the avatar and the eye.
-pub fn follow(world: &World, feet: Vec2, yaw: f32, aspect: f32) -> View {
-    clipped(world, FollowCamera::new(ground(feet), yaw), aspect)
+/// Third person behind `feet`, looking along `yaw`.
+pub fn follow(feet: Vec2, yaw: f32) -> FollowCamera {
+    FollowCamera::new(ground(feet), yaw)
 }
 
-/// A spectator's view: higher and further back than `follow`, circling
-/// `feet` at `yaw`, and clipped the same way so a wall never hides the
-/// watched player.
-pub fn orbit(world: &World, feet: Vec2, yaw: f32, aspect: f32) -> View {
-    let cam = FollowCamera {
+/// A spectator's camera: higher and further back than `follow`, circling
+/// `feet` at `yaw`.
+pub fn orbit(feet: Vec2, yaw: f32) -> FollowCamera {
+    FollowCamera {
         pitch: 0.6,
         distance: 9.0,
         ..FollowCamera::new(ground(feet), yaw)
-    };
-    clipped(world, cam, aspect)
+    }
 }
 
-fn clipped(world: &World, cam: FollowCamera, aspect: f32) -> View {
-    cam.view_clipped(aspect, |from, to| {
+/// How far back `cam` can sit without a solid between the eye and the
+/// watched avatar.
+pub fn free_distance(world: &World, cam: &FollowCamera) -> f32 {
+    cam.free_distance(|from, to| {
         let g = |v: Vec3| game::Vec3::new(v.x, v.y, v.z);
         world.ray_hit(g(from), g(to)).unwrap_or(f32::INFINITY)
     })
+}
+
+/// `cam` as far back as `world` lets it, with no easing.
+pub fn clipped(world: &World, cam: FollowCamera, aspect: f32) -> View {
+    cam.view_at(free_distance(world, &cam), aspect)
+}
+
+/// How long the eye takes to get about two thirds of the way back out after
+/// a wall stops pulling it in.
+const EASE_OUT_MS: f64 = 350.0;
+
+/// The eye's distance from the followed avatar across frames. A wall pulls
+/// it in at once, so the eye never sees through it; once the way clears it
+/// eases back out, so passing a pole does not make it pop.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Zoom {
+    pub distance: f32,
+    at_ms: f64,
+}
+
+impl Zoom {
+    /// This frame's distance, given `free_distance` now.
+    pub fn next(prev: Option<Zoom>, free: f32, now_ms: f64) -> Zoom {
+        let distance = match prev {
+            Some(z) if z.distance < free => {
+                let dt = (now_ms - z.at_ms).max(0.0);
+                let k = 1.0 - (-dt / EASE_OUT_MS).exp() as f32;
+                z.distance + (free - z.distance) * k
+            }
+            _ => free,
+        };
+        Zoom {
+            distance,
+            at_ms: now_ms,
+        }
+    }
+}
+
+/// What `cam` sees at `zoom`'s distance. `own` is your avatar when `cam`
+/// follows it, left out when the eye is too close to it.
+pub fn shot(
+    world: &World,
+    avatars: &[AvatarView],
+    cam: &FollowCamera,
+    zoom: Zoom,
+    own: Option<PlayerId>,
+    aspect: f32,
+) -> (View, Scene) {
+    let hidden = own.filter(|_| zoom.distance < engine::camera::CLOSE);
+    (
+        cam.view_at(zoom.distance, aspect),
+        scene(world, avatars, hidden),
+    )
 }
 
 #[cfg(test)]
@@ -176,7 +231,7 @@ mod tests {
             size: game::Vec3::new(0.5, 4.0, 0.5),
             color: [255, 0, 51],
         });
-        let s = scene(&world, &[]);
+        let s = scene(&world, &[], None);
         assert_eq!(s.instances.len(), 1);
         let i = s.instances[0];
         assert_eq!(i.shape, Shape::Cylinder);
@@ -191,7 +246,7 @@ mod tests {
         let seeker = avatar(1, Role::Seeker, Status::Active, Vec2::new(2.0, -1.0));
         let hider = avatar(2, Role::Hider, Status::Active, Vec2::new(5.0, 5.0));
         let caught = avatar(3, Role::Hider, Status::Caught, Vec2::new(-5.0, 0.0));
-        let s = scene(&world, &[seeker, hider, caught]);
+        let s = scene(&world, &[seeker, hider, caught], None);
 
         assert_eq!(s.instances.len(), 6, "two figures of three shapes");
         assert_eq!(s.instances[0].color, SEEKER);
@@ -235,7 +290,7 @@ mod tests {
     fn the_follow_camera_stays_on_the_near_side_of_a_wall() {
         let mut world = World::generate(SceneKind::Kitchen, 3);
         world.solids.clear();
-        let open = follow(&world, Vec2::ZERO, 0.0, 1.5);
+        let open = clipped(&world, follow(Vec2::ZERO, 0.0), 1.5);
         world.solids.push(game::Solid {
             shape: game::Footprint::Aabb(game::Aabb2::centered(
                 Vec2::new(0.0, -2.0),
@@ -243,12 +298,73 @@ mod tests {
             )),
             height: 3.0,
         });
-        let walled = follow(&world, Vec2::ZERO, 0.0, 1.5);
+        let walled = clipped(&world, follow(Vec2::ZERO, 0.0), 1.5);
         assert!(open.eye.z < -2.5, "behind the avatar: {}", open.eye);
         assert!(
             walled.eye.z > -1.8,
             "pulled in front of the wall: {}",
             walled.eye
         );
+    }
+
+    /// Your avatar's head as a share of the screen height: its projected
+    /// radius. None when it is not drawn.
+    fn head_size(view: &View, scene: &Scene) -> Option<f32> {
+        let skull = scene.instances.iter().find(|i| i.shape == Shape::Sphere)?;
+        let radius = skull.model.transform_vector3(Vec3::X).length() / 2.0;
+        let dist = centre(skull).distance(view.eye);
+        if dist <= radius {
+            return Some(f32::INFINITY);
+        }
+        let angle = (radius / dist).asin();
+        Some(angle.tan() / (engine::camera::FOV_Y / 2.0).tan() / 2.0)
+    }
+
+    fn backed_against_a_wall(gap: f32) -> World {
+        let mut world = World::generate(SceneKind::City, 3);
+        world.solids.clear();
+        world.props.clear();
+        world.solids.push(game::Solid {
+            shape: game::Footprint::Aabb(game::Aabb2::centered(
+                Vec2::new(0.0, -gap - 0.5),
+                Vec2::new(6.0, 0.5),
+            )),
+            height: 12.0,
+        });
+        world
+    }
+
+    #[test]
+    fn backed_against_a_wall_your_own_head_never_fills_the_view() {
+        let mut me = avatar(1, Role::Seeker, Status::Active, Vec2::ZERO);
+        me.body.yaw = 0.0;
+        let cam = follow(me.body.pos, 0.0);
+        let mut drawn_at = Vec::new();
+        for gap in [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0] {
+            let world = backed_against_a_wall(gap);
+            let zoom = Zoom::next(None, free_distance(&world, &cam), 0.0);
+            let (view, scene) = shot(&world, &[me], &cam, zoom, Some(me.id), 1.6);
+            assert!(view.eye.z > -gap, "gap {gap}: eye {} in the wall", view.eye);
+            assert_eq!(scene.wedges.len(), 1, "gap {gap}: your wedge still shows");
+            if let Some(size) = head_size(&view, &scene) {
+                assert!(size < 0.1, "gap {gap}: head is {size} of the screen");
+                drawn_at.push(gap);
+            }
+        }
+        assert!(
+            drawn_at.contains(&6.0),
+            "with room behind you, you are drawn"
+        );
+    }
+
+    #[test]
+    fn the_eye_snaps_in_at_once_and_eases_back_out() {
+        let z = Zoom::next(None, 4.5, 0.0);
+        let z = Zoom::next(Some(z), 0.8, 16.0);
+        assert_eq!(z.distance, 0.8, "never lags behind a wall");
+        let z = Zoom::next(Some(z), 4.5, 32.0);
+        assert!(z.distance > 0.8 && z.distance < 1.2, "{}", z.distance);
+        let z = Zoom::next(Some(z), 4.5, 1500.0);
+        assert!(z.distance > 4.4, "{}", z.distance);
     }
 }
