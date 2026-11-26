@@ -1,0 +1,19 @@
+name = "lightandseek"
+main = "build/index.js"
+compatibility_date = "2026-11-01"
+# Runs before andrewyao.app's custom domain Worker, which serves the client
+# at /seek/ as a static asset.
+routes = [{ pattern = "andrewyao.app/seek/ws/*", zone_name = "andrewyao.app" }]
+
+[build]
+command = "worker-build --release"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+# Rooms keep nothing in storage, but SQLite is the recommended Durable Object
+# backend and the only one on the free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

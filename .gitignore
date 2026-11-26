@@ -4,3 +4,6 @@ dist/
 node_modules/
 .claude/
 .playwright-mcp/
+.tools/
+.wrangler/
+crates/cloudflare/build/
