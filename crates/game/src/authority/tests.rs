@@ -382,6 +382,24 @@ fn resuming_over_an_open_socket_closes_it_and_its_late_leave_is_ignored() {
     );
 }
 
+#[test]
+fn a_resumed_hello_renames_the_player() {
+    let mut net = Net::new(1);
+    let a = net.join(1, None);
+    net.leave(1);
+    let step = net.room.join(
+        ConnId(2),
+        &wire::encode(&ClientMsg::Hello {
+            name: "  Ada ".into(),
+            resume: Some(a),
+        }),
+    );
+    net.open.insert(ConnId(2));
+    net.apply(step.unwrap());
+    let (_, roster) = last_roster(&net.take(2));
+    assert_eq!((roster[0].id, roster[0].name.as_str()), (a, "Ada"));
+}
+
 /// One human plus one bot, run into the seek phase with the human sending
 /// `per_tick` identical inputs each tick. Returns the human's positions.
 fn walk(per_tick: u32) -> Vec<Vec2> {

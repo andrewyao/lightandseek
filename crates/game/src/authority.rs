@@ -182,8 +182,8 @@ impl Room {
     }
 
     /// Handles a socket's first frame, which must be `Hello`. A `resume` of a
-    /// known player reclaims it, and if that player still had a socket the
-    /// step closes it.
+    /// known player reclaims it under the hello's name, and if that player
+    /// still had a socket the step closes it.
     pub fn join(&mut self, conn: ConnId, hello: &[u8]) -> Result<Step, WireError> {
         let ClientMsg::Hello { name, resume } = wire::decode(hello)? else {
             return Err(WireError::Unexpected);
@@ -197,6 +197,7 @@ impl Room {
                     step.close.push(old);
                 }
                 human.presence = Presence::Connected(conn);
+                human.name = clean_name(&name, id);
                 if let Some(inputs) = self.inputs_mut(id) {
                     inputs.restart();
                 }
