@@ -2,3 +2,4 @@
 //! covers them. The wasm shell in `main.rs` drives them.
 
 pub mod draw;
+pub mod input;
