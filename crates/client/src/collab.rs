@@ -4,7 +4,9 @@
 //! The first frame on each socket is the room's Welcome, which builds the
 //! replica. Every Hello after the first carries the id the room gave this
 //! tab, kept in `sessionStorage` so a reload resumes the same avatar while a
-//! second tab of the same room joins as a new player.
+//! second tab of the same room joins as a new player. A duplicated tab copies
+//! that storage, so when the room says another socket took the player over,
+//! this tab drops the id and rejoins as someone new instead of taking it back.
 
 use std::rc::Rc;
 
@@ -129,6 +131,8 @@ pub struct Session {
     pub name: String,
     /// `Some` once the current socket has been welcomed.
     replica: Option<Replica>,
+    /// The player the next Hello asks to resume.
+    resume: Option<PlayerId>,
     socket: Option<Socket>,
     /// Consecutive failed attempts, for backoff.
     attempts: u32,
@@ -137,6 +141,7 @@ pub struct Session {
 impl Session {
     pub fn new(room: String, name: String) -> Session {
         Session {
+            resume: load_resume(&room),
             room,
             name,
             replica: None,
@@ -163,7 +168,7 @@ impl Session {
 
     pub fn opened(&self) {
         if let Some(s) = &self.socket {
-            s.send(&Replica::hello(&self.name, load_resume(&self.room)));
+            s.send(&Replica::hello(&self.name, self.resume));
         }
     }
 
@@ -171,12 +176,19 @@ impl Session {
         match &mut self.replica {
             None => {
                 let r = Replica::new(bytes)?;
+                self.resume = Some(r.you());
                 save_resume(&self.room, r.you());
                 self.replica = Some(r);
                 self.attempts = 0;
                 Ok(Got::Welcome)
             }
-            Some(r) => r.receive(bytes, now_ms).map(Got::Event),
+            Some(r) => {
+                let event = r.receive(bytes, now_ms)?;
+                if event == Some(Event::Replaced) {
+                    self.resume = None;
+                }
+                Ok(Got::Event(event))
+            }
         }
     }
 

@@ -632,3 +632,15 @@ fn idle_players_start_the_seek_spread_out_and_out_of_the_seekers_reach() {
         }
     }
 }
+
+#[test]
+fn resuming_over_an_open_socket_tells_the_old_one_it_was_replaced() {
+    let mut net = Net::new(1);
+    let a = net.join(1, None);
+    net.take(1);
+    net.join(2, Some(a));
+    assert!(
+        net.take(1).iter().any(|m| matches!(m, ServerMsg::Replaced)),
+        "the displaced socket learns why it closes, so it does not resume again"
+    );
+}

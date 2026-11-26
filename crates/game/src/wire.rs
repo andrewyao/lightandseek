@@ -85,6 +85,10 @@ pub(crate) enum ServerMsg {
         winner: Role,
     },
     Refused(Refusal),
+    /// Sent to a socket whose player a newer socket resumed, just before it
+    /// closes. Its
+    /// client must not resume that player again.
+    Replaced,
 }
 
 pub(crate) fn encode<T: Serialize>(msg: &T) -> Vec<u8> {

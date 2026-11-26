@@ -145,7 +145,7 @@ impl Play {
             }
             Some(Event::Refused(why)) => self.ui.refused.set(Some(ui::refusal(why))),
             Some(Event::Roster) => self.ui.refused.set(None),
-            Some(Event::RoundEnd { .. }) | None => {}
+            Some(Event::RoundEnd { .. } | Event::Replaced) | None => {}
         }
         self.pump(now);
         true

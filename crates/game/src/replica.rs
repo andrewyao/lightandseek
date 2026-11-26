@@ -41,6 +41,8 @@ pub enum Event {
     Caught { hider: PlayerId, by: PlayerId },
     RoundEnd { winner: Role },
     Refused(Refusal),
+    /// A newer socket resumed this player; this one is about to close.
+    Replaced,
 }
 
 /// One avatar as the engine should draw it.
@@ -208,6 +210,7 @@ impl Replica {
             ServerMsg::Caught { hider, by } => Some(Event::Caught { hider, by }),
             ServerMsg::RoundEnd { winner } => Some(Event::RoundEnd { winner }),
             ServerMsg::Refused(why) => Some(Event::Refused(why)),
+            ServerMsg::Replaced => Some(Event::Replaced),
         })
     }
 

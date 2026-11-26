@@ -194,6 +194,7 @@ impl Room {
             Some(id) => {
                 let human = self.humans.get_mut(&id).expect("checked above");
                 if let Presence::Connected(old) = human.presence {
+                    step.push(To::One(old), &ServerMsg::Replaced);
                     step.close.push(old);
                 }
                 human.presence = Presence::Connected(conn);
