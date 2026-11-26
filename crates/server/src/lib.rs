@@ -19,12 +19,18 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tower_http::services::ServeDir;
 use tracing::{info, warn};
 
-use crate::room::{Out, RoomName, Rooms};
+use crate::room::{RoomName, Rooms};
+
+/// A peer that stops reading stalls a write once the kernel buffers fill,
+/// and the pump only sees the room drop its queue between writes. Without a
+/// bound the stalled socket would stay open forever.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -120,9 +126,8 @@ async fn serve_socket(socket: WebSocket, room: RoomName, rooms: Rooms) {
             _ => return,
         }
     };
-    let (out, mut inbox) = mpsc::unbounded_channel();
-    let Some(member) = rooms.join(&room, hello, out).await else {
-        let _ = sink.send(Message::Close(None)).await;
+    let Some((member, mut inbox)) = rooms.join(&room, hello).await else {
+        let _ = timeout(WRITE_TIMEOUT, sink.send(Message::Close(None))).await;
         return;
     };
     loop {
@@ -141,15 +146,16 @@ async fn serve_socket(socket: WebSocket, room: RoomName, rooms: Rooms) {
                 Some(Ok(Message::Close(_)) | Err(_)) | None => break,
             },
             out = inbox.recv() => match out {
-                Some(Out::Frame(b)) => {
-                    if sink.send(Message::Binary(b)).await.is_err() {
+                Some(b) => {
+                    let sent = timeout(WRITE_TIMEOUT, sink.send(Message::Binary(b))).await;
+                    if !matches!(sent, Ok(Ok(()))) {
                         break;
                     }
                 }
-                Some(Out::Close) | None => break,
+                None => break,
             },
         }
     }
     member.leave();
-    let _ = sink.send(Message::Close(None)).await;
+    let _ = timeout(WRITE_TIMEOUT, sink.send(Message::Close(None))).await;
 }

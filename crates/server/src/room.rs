@@ -40,19 +40,19 @@ impl RoomName {
     }
 }
 
-/// What a room tells one socket.
-#[derive(Debug)]
-pub enum Out {
-    Frame(Bytes),
-    Close,
-}
+/// Frames a room holds for one socket, about three seconds of snapshots. A
+/// socket that falls further behind is dropped from the room, which closes
+/// its queue. Its player keeps the seat for the game's grace period, and the
+/// client's resume gets it back, so closing loses no state that a dropped
+/// frame would not.
+pub const QUEUE: usize = 64;
 
 #[derive(Debug)]
 enum Cmd {
     Join {
         conn: ConnId,
         hello: Bytes,
-        out: mpsc::UnboundedSender<Out>,
+        out: mpsc::Sender<Bytes>,
         /// `Err` means the room refused this socket. A dropped reply means the
         /// room stopped first, and the caller retries.
         reply: oneshot::Sender<Result<(), ()>>,
@@ -122,18 +122,20 @@ impl Rooms {
     }
 
     /// Hands a socket's first frame to its room, starting the room if needed.
-    /// `None` means refused: a bad hello, or shutdown.
+    /// `None` means refused: a bad hello, or shutdown. The receiver yields
+    /// the room's frames for this socket and ends once the room lets go of
+    /// it: on leave, on a resume elsewhere, or when it falls `QUEUE` behind.
     pub async fn join(
         &self,
         room: &RoomName,
         hello: Bytes,
-        out: mpsc::UnboundedSender<Out>,
-    ) -> Option<Member> {
+    ) -> Option<(Member, mpsc::Receiver<Bytes>)> {
         let conn = {
             let mut reg = self.lock();
             reg.next_conn += 1;
             ConnId(reg.next_conn)
         };
+        let (out, frames) = mpsc::channel(QUEUE);
         loop {
             let (epoch, tx) = self.live(room)?;
             let (reply, answer) = oneshot::channel();
@@ -148,7 +150,7 @@ impl Rooms {
                 continue;
             }
             match answer.await {
-                Ok(Ok(())) => return Some(Member { conn, tx }),
+                Ok(Ok(())) => return Some((Member { conn, tx }, frames)),
                 Ok(Err(())) => return None,
                 Err(_) => self.forget(room, epoch),
             }
@@ -238,7 +240,7 @@ fn entropy() -> u64 {
 struct Room {
     name: RoomName,
     game: game::Room,
-    sockets: HashMap<ConnId, mpsc::UnboundedSender<Out>>,
+    sockets: HashMap<ConnId, mpsc::Sender<Bytes>>,
 }
 
 async fn run(rooms: Rooms, name: RoomName, epoch: u64, mut rx: mpsc::UnboundedReceiver<Cmd>) {
@@ -323,40 +325,53 @@ impl Room {
         }
     }
 
+    /// Dropping the socket's sender ends its queue, which ends the socket.
     fn leave(&mut self, conn: ConnId) {
-        let Some(out) = self.sockets.remove(&conn) else {
+        if self.sockets.remove(&conn).is_none() {
             return;
-        };
-        let _ = out.send(Out::Close);
+        }
         info!(room = self.name.as_str(), conn = conn.0, "leave");
         let step = self.game.leave(conn);
         self.perform(step);
     }
 
+    /// Never waits on a socket. One whose queue is full or gone leaves.
     fn perform(&mut self, step: Step) {
+        let mut behind = Vec::new();
         for (to, frame) in step.send {
             let bytes = Bytes::copy_from_slice(frame.as_bytes());
-            let send = |out: &mpsc::UnboundedSender<Out>| {
-                let _ = out.send(Out::Frame(bytes.clone()));
+            let mut send = |(conn, out): (&ConnId, &mpsc::Sender<Bytes>)| {
+                if out.try_send(bytes.clone()).is_err() {
+                    behind.push(*conn);
+                }
             };
             match to {
-                To::One(c) => self.sockets.get(&c).into_iter().for_each(send),
-                To::All => self.sockets.values().for_each(send),
+                To::One(c) => self
+                    .sockets
+                    .get_key_value(&c)
+                    .into_iter()
+                    .for_each(&mut send),
+                To::All => self.sockets.iter().for_each(&mut send),
             }
         }
         // A resume moved the player to a new socket. The old one holds no
         // player now, so the room needs no `leave` for it.
         for conn in step.close {
-            if let Some(out) = self.sockets.remove(&conn) {
-                let _ = out.send(Out::Close);
+            self.sockets.remove(&conn);
+        }
+        for conn in behind {
+            if self.sockets.contains_key(&conn) {
+                warn!(
+                    room = self.name.as_str(),
+                    conn = conn.0,
+                    "socket stopped taking frames, closing"
+                );
+                self.leave(conn);
             }
         }
     }
 
     fn close_all(&mut self) {
-        for out in self.sockets.values() {
-            let _ = out.send(Out::Close);
-        }
         self.sockets.clear();
     }
 }

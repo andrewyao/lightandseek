@@ -39,6 +39,8 @@ pub struct Client {
     pub rep: Replica,
     ws: Ws,
     pub events: Vec<Event>,
+    /// Binary frames received after the welcome.
+    pub frames: usize,
     /// Inputs made during a `play` step, sent after it.
     outbox: Vec<Frame>,
     epoch: Instant,
@@ -69,6 +71,7 @@ impl Client {
             rep: Replica::new(&welcome).unwrap(),
             ws,
             events: Vec::new(),
+            frames: 0,
             outbox: Vec::new(),
             epoch: Instant::now(),
         }
@@ -98,6 +101,7 @@ impl Client {
         while let Some(msg) = self.ws.next().now_or_never() {
             match msg {
                 Some(Ok(Message::Binary(b))) => {
+                    self.frames += 1;
                     let now = self.now_ms();
                     if let Some(e) = self.rep.receive(&b, now).unwrap() {
                         self.events.push(e);
