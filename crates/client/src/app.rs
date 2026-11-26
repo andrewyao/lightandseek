@@ -256,9 +256,20 @@ const SCENES: [Option<SceneKind>; 4] = [
 
 #[component]
 fn LobbyPanel(sv: Sv, ui: Ui, room: String) -> impl IntoView {
-    let config = Signal::derive(move || ui.lobby.get().map(|l| l.config).unwrap_or_default());
+    let server = Signal::derive(move || ui.lobby.get().map(|l| l.config).unwrap_or_default());
+    // The host's latest edit, shown until the room echoes it back. Without it,
+    // a second edit made before the first echo starts from the stale config
+    // and silently undoes the first.
+    let draft = RwSignal::new(None::<LobbyConfig>);
+    Effect::new(move |_| {
+        if draft.get_untracked() == Some(server.get()) {
+            draft.set(None);
+        }
+    });
+    let config = Signal::derive(move || draft.get().unwrap_or_else(|| server.get()));
     let is_host = move || ui.lobby.get().is_some_and(|l| l.is_host);
     let send = Callback::new(move |c: LobbyConfig| {
+        draft.set(Some(c));
         sv.with_value(|sh| sh.borrow().configure(c));
     });
     let blocked = move || ui.lobby.get().and_then(|l| l.blocked);
