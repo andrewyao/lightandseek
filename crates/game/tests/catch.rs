@@ -89,6 +89,20 @@ fn catch_table() {
     }
 }
 
+/// The engine maps `Vec2 (x, y)` to world `(x, 0, y)` with Y up and relies
+/// on yaw 0 facing +Z and strafe-right being `facing × up`.
+#[test]
+fn yaw_convention_matches_the_engine() {
+    use game::geom::right;
+    let close = |a: Vec2, b: Vec2| a.distance(b) < 1e-6;
+    let quarter = std::f32::consts::FRAC_PI_2;
+    assert!(close(facing(0.0), Vec2::new(0.0, 1.0)));
+    assert!(close(facing(quarter), Vec2::new(1.0, 0.0)));
+    assert!(close(right(0.0), Vec2::new(-1.0, 0.0)));
+    assert!(close(right(quarter), Vec2::new(0.0, 1.0)));
+    assert!((yaw_toward(Vec2::new(1.0, 0.0)) - quarter).abs() < 1e-6);
+}
+
 #[test]
 fn facing_survives_unwrapped_yaw() {
     let open = World::open(SceneKind::Park);

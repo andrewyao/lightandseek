@@ -235,7 +235,7 @@ impl<'a> Builder<'a> {
         None
     }
 
-    /// A random length `lo..hi` along x or y, as box half extents.
+    /// Half extents of a `long` by `thick` box, turned along x or y at random.
     fn oriented(&mut self, long: f32, thick: f32) -> Vec2 {
         if self.rng.chance(0.5) {
             Vec2::new(long / 2.0, thick / 2.0)

@@ -220,7 +220,7 @@ fn start_is_refused_under_two_players_or_missing_humans() {
 }
 
 /// Runs one human (standing still) against three bots until the first
-/// round ends, and returns every frame the room sent.
+/// round ends. Returns the net, holding every frame sent, and the winner.
 fn headless_round(seed: u64, scene: SceneKind) -> (Net, Role) {
     let mut net = Net::new(99);
     net.join(1, None);

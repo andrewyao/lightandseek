@@ -73,10 +73,27 @@ enum Stage {
 struct Round {
     world: World,
     nav: NavGrid,
-    /// Hiding, Seeking, or Results. Never Lobby.
-    phase: Phase,
+    clock: Clock,
     seeker: PlayerId,
     avatars: BTreeMap<PlayerId, Avatar>,
+}
+
+/// A round's phases. `Phase` adds `Lobby` for the wire.
+#[derive(Copy, Clone, Debug)]
+enum Clock {
+    Hiding { until: Tick },
+    Seeking { until: Tick },
+    Results { until: Tick, winner: Role },
+}
+
+impl Clock {
+    fn phase(self) -> Phase {
+        match self {
+            Clock::Hiding { until } => Phase::Hiding { until },
+            Clock::Seeking { until } => Phase::Seeking { until },
+            Clock::Results { until, winner } => Phase::Results { until, winner },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -294,7 +311,7 @@ impl Room {
     pub fn phase(&self) -> Phase {
         match &self.stage {
             Stage::Lobby => Phase::Lobby,
-            Stage::Round(r) => r.phase,
+            Stage::Round(r) => r.clock.phase(),
         }
     }
 
@@ -472,18 +489,16 @@ impl Room {
             avatars.insert(id, Avatar { state, driver });
         }
         let until = self.now.plus(secs(self.config.hide_secs.into()));
+        let sent = world.clone();
         self.stage = Stage::Round(Round {
             world,
             nav,
-            phase: Phase::Hiding { until },
+            clock: Clock::Hiding { until },
             seeker,
             avatars,
         });
-        let Stage::Round(r) = &self.stage else {
-            unreachable!()
-        };
         let msg = ServerMsg::RoundStart {
-            world: r.world.clone(),
+            world: sent,
             seeker,
             roster: self.roster(),
         };
@@ -525,24 +540,21 @@ impl Room {
         let Stage::Round(r) = &mut self.stage else {
             return;
         };
-        if let Phase::Hiding { .. } | Phase::Seeking { .. } = r.phase {
-            let winner = if !r.avatars.contains_key(&r.seeker) {
-                Role::Hider
-            } else if !r
-                .avatars
-                .values()
-                .any(|a| a.state.role == Role::Hider && a.state.status == Status::Active)
-            {
-                Role::Seeker
-            } else {
-                return;
-            };
-            r.phase = Phase::Results {
-                until: self.now.plus(RESULTS_TICKS),
-                winner,
-            };
-            step.push(To::All, &ServerMsg::RoundEnd { winner });
+        if let Clock::Results { .. } = r.clock {
+            return;
         }
+        let winner = if !r.avatars.contains_key(&r.seeker) {
+            Role::Hider
+        } else if !r
+            .avatars
+            .values()
+            .any(|a| a.state.role == Role::Hider && a.state.status == Status::Active)
+        {
+            Role::Seeker
+        } else {
+            return;
+        };
+        r.finish(self.now, winner, step);
     }
 
     fn advance(&mut self, step: &mut Step) {
@@ -550,18 +562,14 @@ impl Room {
         let Stage::Round(r) = &mut self.stage else {
             return;
         };
-        match r.phase {
-            Phase::Lobby => unreachable!("a round is never in the lobby phase"),
-            Phase::Results { until, .. } => {
-                if now >= until {
-                    self.start_round(step);
-                }
-                return;
+        if let Clock::Results { until, .. } = r.clock {
+            if now >= until {
+                self.start_round(step);
             }
-            Phase::Hiding { .. } | Phase::Seeking { .. } => {}
+            return;
         }
         r.simulate(now, &mut self.rng);
-        if let Phase::Seeking { .. } = r.phase {
+        if let Clock::Seeking { .. } = r.clock {
             let seeker = r.avatars[&r.seeker].state;
             for a in r.avatars.values_mut() {
                 let s = &mut a.state;
@@ -578,29 +586,21 @@ impl Room {
                 }
             }
         }
-        match r.phase {
-            Phase::Hiding { until } if now >= until => {
+        // A catch on the deadline tick wins for the seeker, so settle first.
+        self.settle(step);
+        let Stage::Round(r) = &mut self.stage else {
+            return;
+        };
+        match r.clock {
+            Clock::Hiding { until } if now >= until => {
                 let seek = secs(self.config.seek_secs.into());
-                r.phase = Phase::Seeking {
+                r.clock = Clock::Seeking {
                     until: now.plus(seek),
                 };
             }
-            Phase::Seeking { until } if now >= until => {
-                r.phase = Phase::Results {
-                    until: now.plus(RESULTS_TICKS),
-                    winner: Role::Hider,
-                };
-                step.push(
-                    To::All,
-                    &ServerMsg::RoundEnd {
-                        winner: Role::Hider,
-                    },
-                );
-                return;
-            }
+            Clock::Seeking { until } if now >= until => r.finish(now, Role::Hider, step),
             _ => {}
         }
-        self.settle(step);
     }
 
     fn push_roster(&self, step: &mut Step) {
@@ -647,6 +647,14 @@ impl Room {
 }
 
 impl Round {
+    fn finish(&mut self, now: Tick, winner: Role, step: &mut Step) {
+        self.clock = Clock::Results {
+            until: now.plus(RESULTS_TICKS),
+            winner,
+        };
+        step.push(To::All, &ServerMsg::RoundEnd { winner });
+    }
+
     /// Moves every avatar one step. Bots decide from the state at the start
     /// of the tick, so avatar order does not change what they see.
     fn simulate(&mut self, now: Tick, rng: &mut Rng) {
@@ -658,7 +666,7 @@ impl Round {
                     let senses = Senses {
                         me: a.state,
                         now,
-                        phase: self.phase,
+                        phase: self.clock.phase(),
                         avatars: &before,
                         world: &self.world,
                         nav: &self.nav,
@@ -667,7 +675,7 @@ impl Round {
                 }
             };
             let s = &mut a.state;
-            if let Some(speed) = mobility(self.phase, s.role, s.status) {
+            if let Some(speed) = mobility(self.clock.phase(), s.role, s.status) {
                 s.body = physics::step(s.body, &input, speed, &self.world);
             }
         }

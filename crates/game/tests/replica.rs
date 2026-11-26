@@ -53,8 +53,7 @@ impl Link {
         self.downlink(step);
     }
 
-    /// Advances one tick, returning the client's frame for this tick's input
-    /// (not yet sent).
+    /// Advances one tick: uplink, room tick, downlink.
     fn tick(&mut self) {
         self.now += 1;
         while self.up.front().is_some_and(|(due, _)| *due <= self.now) {
