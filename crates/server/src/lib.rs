@@ -8,6 +8,7 @@ pub mod room;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -28,11 +29,16 @@ use crate::room::{Out, RoomName, Rooms};
 #[derive(Clone, Debug)]
 pub struct Config {
     pub dist: PathBuf,
+    /// How long a room outlives its last socket.
+    pub linger: Duration,
 }
 
 impl Config {
     pub fn new(dist: PathBuf) -> Config {
-        Config { dist }
+        Config {
+            dist,
+            linger: room::LINGER,
+        }
     }
 }
 
@@ -47,7 +53,7 @@ pub struct Server {
 impl Server {
     pub async fn start(listener: TcpListener, config: Config) -> io::Result<Server> {
         let addr = listener.local_addr()?;
-        let rooms = Rooms::new();
+        let rooms = Rooms::new(config.linger);
         let app = Router::new()
             .route("/ws/{room}", get(upgrade))
             .fallback_service(ServeDir::new(config.dist))

@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use futures_util::{FutureExt, SinkExt, StreamExt};
-use game::{Event, Frame, Replica, Vec2, ViewState};
+use game::{Event, Frame, PlayerId, Replica, Vec2, ViewState};
 use server::{Config, Server};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
@@ -17,10 +17,21 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub const ROOM: &str = "test-room";
 
 pub async fn start() -> Server {
+    start_with(Config::new("no-dist".into())).await
+}
+
+/// A server whose empty rooms stop after `linger`.
+pub async fn start_lingering(linger: Duration) -> Server {
+    start_with(Config {
+        linger,
+        ..Config::new("no-dist".into())
+    })
+    .await
+}
+
+async fn start_with(config: Config) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    Server::start(listener, Config::new("no-dist".into()))
-        .await
-        .unwrap()
+    Server::start(listener, config).await.unwrap()
 }
 
 #[derive(Debug)]
@@ -35,11 +46,18 @@ pub struct Client {
 
 impl Client {
     pub async fn connect(addr: SocketAddr, name: &str) -> Client {
+        Client::connect_as(addr, name, None).await
+    }
+
+    /// Connects with `resume`, the id from an earlier socket.
+    pub async fn connect_as(addr: SocketAddr, name: &str, resume: Option<PlayerId>) -> Client {
         let mut ws = connect_async(format!("ws://{addr}/ws/{ROOM}"))
             .await
             .unwrap()
             .0;
-        ws.send(binary(&Replica::hello(name, None))).await.unwrap();
+        ws.send(binary(&Replica::hello(name, resume)))
+            .await
+            .unwrap();
         let welcome = loop {
             match ws.next().await {
                 Some(Ok(Message::Binary(b))) => break b,

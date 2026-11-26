@@ -2,8 +2,9 @@
 //! `game::Room`. Sockets talk to a room through its channel, and the task
 //! ticks the room every 50 ms.
 //!
-//! A room starts on its first join and stops once its last socket leaves.
-//! Rooms are ephemeral: nothing is written to disk.
+//! A room starts on its first join and stops once it has had no socket for
+//! its linger, so a player who reloads comes back to the same round. Rooms
+//! are ephemeral: nothing is written to disk.
 
 use std::collections::HashMap;
 use std::hash::{BuildHasher, RandomState};
@@ -14,10 +15,13 @@ use axum::body::Bytes;
 use game::{ConnId, Step, To};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 use tracing::{info, warn};
 
 const TICK: Duration = Duration::from_millis(50);
+/// How long an empty room keeps running. Longer than the game's reconnect
+/// grace, so a reload within the grace finds its avatar.
+pub const LINGER: Duration = Duration::from_secs(15);
 
 /// A room name that passed `^[a-z0-9-]{1,64}$`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -64,8 +68,11 @@ enum Cmd {
 }
 
 /// The live rooms. The lock guards only this map, never a `game::Room`.
-#[derive(Clone, Debug, Default)]
-pub struct Rooms(Arc<Mutex<Registry>>);
+#[derive(Clone, Debug)]
+pub struct Rooms {
+    reg: Arc<Mutex<Registry>>,
+    linger: Duration,
+}
 
 #[derive(Debug, Default)]
 struct Registry {
@@ -106,8 +113,12 @@ impl Member {
 }
 
 impl Rooms {
-    pub fn new() -> Rooms {
-        Rooms::default()
+    /// `linger` is how long a room outlives its last socket.
+    pub fn new(linger: Duration) -> Rooms {
+        Rooms {
+            reg: Arc::default(),
+            linger,
+        }
     }
 
     /// Hands a socket's first frame to its room, starting the room if needed.
@@ -166,7 +177,7 @@ impl Rooms {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Registry> {
-        self.0.lock().expect("registry lock")
+        self.reg.lock().expect("registry lock")
     }
 
     fn live(&self, room: &RoomName) -> Option<(u64, mpsc::UnboundedSender<Cmd>)> {
@@ -238,6 +249,7 @@ async fn run(rooms: Rooms, name: RoomName, epoch: u64, mut rx: mpsc::UnboundedRe
     };
     let mut ticker = tokio::time::interval(TICK);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Burst);
+    let mut empty_since: Option<Instant> = None;
     loop {
         tokio::select! {
             cmd = rx.recv() => {
@@ -247,15 +259,19 @@ async fn run(rooms: Rooms, name: RoomName, epoch: u64, mut rx: mpsc::UnboundedRe
                     return;
                 }
                 room.handle(cmd);
-                if room.sockets.is_empty() && rooms.retire(&name, epoch, &rx) {
-                    info!(room = name.as_str(), "room empty, stopped");
-                    return;
-                }
             }
             _ = ticker.tick() => {
                 let step = room.game.tick();
                 room.perform(step);
             }
+        }
+        if !room.sockets.is_empty() {
+            empty_since = None;
+        } else if empty_since.get_or_insert_with(Instant::now).elapsed() >= rooms.linger
+            && rooms.retire(&name, epoch, &rx)
+        {
+            info!(room = name.as_str(), "room empty, stopped");
+            return;
         }
     }
 }

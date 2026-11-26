@@ -1,5 +1,7 @@
 mod common;
 
+use std::time::Duration;
+
 use common::{Client, play};
 use game::geom::{facing, yaw_toward};
 use game::{Event, LobbyConfig, Phase, PlayerId, Replica, Role, SceneKind, Vec2};
@@ -34,7 +36,7 @@ async fn host_starts(a: &mut Client, config: LobbyConfig) {
 
 #[tokio::test]
 async fn two_clients_and_a_bot_play_a_round_to_the_end() {
-    let server = common::start().await;
+    let server = common::start_lingering(Duration::from_millis(200)).await;
     let mut a = Client::connect(server.addr(), "a").await;
     let mut b = Client::connect(server.addr(), "b").await;
     let (ida, idb) = (a.rep.you(), b.rep.you());
@@ -157,5 +159,38 @@ async fn a_seeker_that_reaches_and_faces_a_hider_catches_it() {
             winner: Role::Seeker
         }));
     }
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_solo_player_who_reloads_mid_round_gets_the_same_round_back() {
+    let server = common::start().await;
+    let mut a = Client::connect(server.addr(), "a").await;
+    let id = a.rep.you();
+    host_starts(&mut a, config(1, 1, 30, 60)).await;
+    play(&mut [&mut a], 5, |cs| {
+        got(cs[0], |e| *e == Event::RoundStart) && cs[0].view().me.is_some()
+    })
+    .await;
+    let world = a.view().world.cloned();
+    drop(a);
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(server.rooms().live_count(), 1, "the empty room lingers");
+
+    let mut back = Client::connect_as(server.addr(), "a", Some(id)).await;
+    assert_eq!(back.rep.you(), id);
+    play(&mut [&mut back], 5, |cs| {
+        got(cs[0], |e| *e == Event::RoundStart) && cs[0].view().me.is_some()
+    })
+    .await;
+    let view = back.view();
+    assert!(
+        matches!(view.phase, Phase::Hiding { .. }),
+        "{:?}",
+        view.phase
+    );
+    assert_eq!(view.world.cloned(), world, "the same round, not a new one");
+    drop(view);
     server.shutdown().await.unwrap();
 }
