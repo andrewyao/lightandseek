@@ -110,27 +110,33 @@ impl FollowCamera {
         View::look_to(self.pivot() - dir * distance, dir, aspect)
     }
 
-    /// The furthest the eye can sit from the pivot, up to `distance`, with
-    /// nothing solid between them. `clip(from, to)` returns how far from
-    /// `from` the segment first hits something solid, or anything at least
-    /// its length when it is clear.
+    /// How far the eye can come out from the pivot, up to `distance`, with
+    /// nothing solid between them at any point on the way. `clip(from, to)`
+    /// returns how far from `from` the segment first hits something solid,
+    /// or anything at least its length when it is clear.
     pub fn free_distance(&self, clip: impl Fn(Vec3, Vec3) -> f32) -> f32 {
         let pivot = self.pivot();
         let clear = |d: f32| {
             let reach = d + CLIP_MARGIN;
             clip(pivot, pivot - self.dir_at(d) * reach) >= reach
         };
-        let mut blocked = self.distance;
-        for i in 0..=SCAN_STEPS {
-            let d = self.distance * (1.0 - i as f32 / SCAN_STEPS as f32);
-            if !clear(d) {
-                blocked = d;
+        if !clear(0.0) {
+            // Closer to a wall than the margin: half the gap keeps the eye
+            // on this side of it.
+            let dir = self.dir_at(0.0);
+            return clip(pivot, pivot - dir * CLIP_MARGIN).max(0.0) / 2.0;
+        }
+        // Outward from the pivot, because each distance swings the eye to
+        // its own pitch: a clear spot past a blocked one would have callers
+        // easing out through the block.
+        let mut ok = 0.0;
+        for i in 1..=SCAN_STEPS {
+            let d = self.distance * i as f32 / SCAN_STEPS as f32;
+            if clear(d) {
+                ok = d;
                 continue;
             }
-            if i == 0 {
-                return d;
-            }
-            let mut ok = d;
+            let mut blocked = d;
             for _ in 0..REFINE_STEPS {
                 let mid = (ok + blocked) / 2.0;
                 if clear(mid) {
@@ -141,10 +147,7 @@ impl FollowCamera {
             }
             return ok;
         }
-        // Closer to a wall than the margin: half the gap keeps the eye on
-        // this side of it.
-        let dir = self.dir_at(0.0);
-        clip(pivot, pivot - dir * CLIP_MARGIN).max(0.0) / 2.0
+        self.distance
     }
 
     fn dir_at(&self, distance: f32) -> Vec3 {

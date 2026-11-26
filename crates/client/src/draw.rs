@@ -367,4 +367,26 @@ mod tests {
         let z = Zoom::next(Some(z), 4.5, 1500.0);
         assert!(z.distance > 4.4, "{}", z.distance);
     }
+
+    #[test]
+    fn every_distance_the_eye_eases_out_through_is_clear_of_walls() {
+        let g = |v: Vec3| game::Vec3::new(v.x, v.y, v.z);
+        let cam = follow(Vec2::ZERO, 0.0);
+        for height in [0.9, 1.3, 1.6, 2.5] {
+            for gap in [0.2, 0.3, 0.5, 0.8, 1.5] {
+                let mut world = backed_against_a_wall(gap);
+                world.solids[0].height = height;
+                let free = free_distance(&world, &cam);
+                let blocked = (1..)
+                    .map(|i| i as f32 * 0.02)
+                    .take_while(|&d| d < free)
+                    .find(|&d| {
+                        world
+                            .ray_hit(g(cam.pivot()), g(cam.view_at(d, 1.0).eye))
+                            .is_some()
+                    });
+                assert_eq!(blocked, None, "{height} tall, {gap} behind, free to {free}");
+            }
+        }
+    }
 }
