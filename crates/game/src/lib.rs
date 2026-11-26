@@ -18,6 +18,7 @@ mod bots;
 pub mod geom;
 mod model;
 pub mod physics;
+mod replica;
 mod rng;
 pub mod rules;
 mod wire;
@@ -29,5 +30,6 @@ pub use model::{
     AvatarState, Body, ConnId, Control, Input, Link, LobbyConfig, Member, Phase, PlayerId, Refusal,
     Role, SceneKind, Seat, Status, Tick,
 };
+pub use replica::{AvatarView, Event, Replica, ViewState};
 pub use wire::{Frame, WireError};
 pub use world::{Prop, Shape, Solid, World};
