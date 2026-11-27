@@ -43,8 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let scene = draw::scene(&world, &avatars, None, &gaits);
 
         let mut top = OrbitCamera::new(Vec3::ZERO);
-        top.pitch = 0.95;
-        top.distance = 46.0;
+        top.pitch = 1.4;
+        top.distance = 62.0;
         let seeker = avatars[0].body;
         for (name, view) in [
             ("top", top.view(off.aspect())),

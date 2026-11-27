@@ -71,9 +71,10 @@ pub fn environment(kind: SceneKind) -> Environment {
             // sky keeps the shaded side of the walls from going brown.
             sky: [0.8, 0.74, 0.66],
             ground: [0.74, 0.74, 0.72],
-            sun: Vec3::new(0.2, 1.0, 0.4),
+            // Near overhead, so 40 u walls do not shade the whole floor.
+            sun: Vec3::new(0.1, 1.0, 0.15),
             ground_material: Material::Concrete,
-            fog: [35.0, 90.0],
+            fog: [60.0, 140.0],
         },
     }
 }

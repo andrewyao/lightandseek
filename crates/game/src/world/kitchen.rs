@@ -1,61 +1,74 @@
-//! A house floor built around a kitchen. The kitchen has a U of counters
-//! with base and upper cabinets, a stove under a hood, a sink under a
-//! window, a tall fridge, and an island with stools. It opens onto a dining
-//! room, and a hallway leads to a living room, a pantry of shelving, a
-//! laundry, and a storeroom.
+//! One kitchen seen by something the size of a beetle: 10 u to the metre,
+//! so the play area is a 4 m square kitchen and an avatar stands about
+//! 10 cm tall.
+//!
+//! An L of counters runs along two walls with a sink under a tall window,
+//! a range under a hood, and wall cabinets above. A fridge fills the
+//! corner, an island stands in the middle, and a table with four chairs
+//! sits across the room. The floor is littered with things to hide behind
+//! and hop onto. Counters, the island, and the table are a second level:
+//! launch pads on the floor throw you onto them, and pads on the counter
+//! throw you onto the fridge and the wall cabinets. Under every counter is
+//! a toe-kick slot just tall enough to crawl into.
 //!
 //! The plan is laid out in one orientation, then mirrored or turned by a
-//! random symmetry of the square. Counters, tables, and seats stay below
-//! `rules::EYE_Y`, so they only hide a player from the camera. The fridge,
-//! shelving, tall cabinets, and plants block sight.
+//! random symmetry of the square.
 
 use super::{Aabb2, Builder, Footprint, HALF_EXTENT, Material, Paint, Shape, Vec2, Vec3, paint};
 
-const WALL: Paint = paint([226, 218, 200], Material::Plaster);
+const WALL: Paint = paint([232, 224, 206], Material::Plaster);
 const CABINET: Paint = paint([92, 128, 118], Material::Wood);
 const STONE: Paint = paint([222, 220, 212], Material::Concrete);
 const STEEL: Paint = paint([178, 182, 188], Material::Metal);
 const DARK: Paint = paint([44, 44, 48], Material::Plain);
-const GLASS: Paint = paint([150, 196, 220], Material::Plain);
+const GLASS: Paint = paint([168, 206, 228], Material::Plain);
+const SKY: Paint = paint([196, 226, 246], Material::Plain);
 const WOOD: Paint = paint([150, 100, 62], Material::Wood);
 const LIGHT_WOOD: Paint = paint([196, 158, 112], Material::Wood);
-const SHELF: Paint = paint([120, 84, 54], Material::Wood);
 const TILE: [Paint; 2] = [
     paint([236, 232, 224], Material::Tile),
-    paint([70, 74, 82], Material::Tile),
+    paint([96, 102, 112], Material::Tile),
 ];
-const FLOOR_WOOD: Paint = paint([176, 138, 98], Material::Wood);
-const CONCRETE: Paint = paint([168, 168, 162], Material::Concrete);
-const RUG: [Paint; 3] = [
-    paint([160, 60, 56], Material::Fabric),
-    paint([62, 92, 140], Material::Fabric),
-    paint([196, 160, 80], Material::Fabric),
+const CERAMIC: [Paint; 3] = [
+    paint([230, 96, 80], Material::Plain),
+    paint([90, 140, 210], Material::Plain),
+    paint([244, 240, 232], Material::Plain),
 ];
-const SOFA: Paint = paint([96, 110, 150], Material::Fabric);
-const POT: Paint = paint([184, 98, 64], Material::Plaster);
-const LEAVES: Paint = paint([64, 130, 70], Material::Foliage);
-const WHITE: Paint = paint([240, 240, 236], Material::Plain);
-const CARDBOARD: [Paint; 2] = [
-    paint([196, 160, 110], Material::Plain),
-    paint([176, 140, 96], Material::Plain),
+const CARDBOARD: Paint = paint([214, 170, 92], Material::Plain);
+const SPONGE: Paint = paint([246, 214, 70], Material::Fabric);
+const SCOURER: Paint = paint([60, 150, 80], Material::Fabric);
+const SUGAR: Paint = paint([250, 250, 246], Material::Plain);
+const BOOKS: [Paint; 3] = [
+    paint([170, 60, 56], Material::Fabric),
+    paint([52, 84, 140], Material::Fabric),
+    paint([212, 180, 96], Material::Fabric),
 ];
-const GOODS: [Paint; 6] = [
-    paint([210, 70, 60], Material::Plain),
-    paint([240, 200, 80], Material::Plain),
-    paint([80, 150, 90], Material::Plain),
-    paint([70, 110, 190], Material::Plain),
-    paint([230, 230, 220], Material::Plain),
-    paint([200, 130, 60], Material::Plain),
+const FRUIT: [Paint; 3] = [
+    paint([214, 50, 40], Material::Plain),
+    paint([250, 190, 40], Material::Plain),
+    paint([120, 180, 60], Material::Plain),
 ];
 
-const WALL_HEIGHT: f32 = 2.4;
-/// Half a wall's thickness.
-const T: f32 = 0.15;
-const HALL: f32 = 4.0;
-const DOOR: f32 = 2.2;
-const COUNTER_DEPTH: f32 = 0.9;
-const COUNTER: f32 = 0.5;
-const TALL: f32 = 1.9;
+pub(crate) const WALL_HEIGHT: f32 = 40.0;
+/// Counter depth.
+const DEPTH: f32 = 6.0;
+/// The top of the counters and the island.
+pub(crate) const COUNTER: f32 = 9.2;
+/// The stone top's thickness.
+const TOP: f32 = 0.6;
+/// The toe-kick slot under every cabinet: this tall, and this deep.
+pub(crate) const KICK: f32 = 1.2;
+const KICK_DEPTH: f32 = 0.9;
+pub(crate) const FRIDGE: f32 = 18.0;
+/// Wall cabinets hang from here to `UPPER_TOP`, this deep.
+const UPPER_BASE: f32 = 14.0;
+pub(crate) const UPPER_TOP: f32 = 21.0;
+const UPPER_DEPTH: f32 = 3.5;
+const TABLE: f32 = 7.6;
+const SEAT: f32 = 4.5;
+/// How high above the floor the floor pads throw you, and the table's.
+const FLOOR_PAD: f32 = COUNTER + 3.0;
+const TABLE_PAD: f32 = TABLE + 2.5;
 
 pub(super) fn build(b: &mut Builder) {
     let h = HALF_EXTENT;
@@ -63,394 +76,254 @@ pub(super) fn build(b: &mut Builder) {
     let sym = Sym::random(b);
     let k = &mut Kit { b, sym };
 
-    let xa = k.range(-5.0, -3.0);
-    let xb = xa + HALL;
-    let (yk, yd) = (k.range(-4.0, -2.0), k.range(8.0, 10.0));
-    let (yp, yl) = (k.range(-8.0, -6.0), k.range(0.0, 2.0));
+    floor(k);
+    baseboards(k);
 
-    k.wall_x(xa, [yk - 3.0, (yk + yd) / 2.0, yd + 4.0], DOOR);
-    k.wall_x(xb, [yp - 3.0, (yp + yl) / 2.0, yl + 4.0], DOOR);
-    k.wall_y(yk, -h, xa - T, [-15.0, xa - 6.0], 3.0);
-    let living_door = k.range(-14.0, -6.0);
-    k.wall_y(yd, -h, xa - T, [living_door], 2.4);
-    k.wall_y(yp, xb + T, h, [], DOOR);
-    k.wall_y(yl, xb + T, h, [h - 3.5], DOOR);
-    k.b.structural();
-
-    kitchen(k, rect(-h, -h, xa - T, yk - T));
-    dining(k, rect(-h, yk + T, xa - T, yd - T));
-    living(k, rect(-h, yd + T, xa - T, h));
-    hallway(k, rect(xa + T, -h, xb - T, h));
-    pantry(k, rect(xb + T, -h, h, yp - T));
-    laundry(k, rect(xb + T, yp + T, h, yl - T));
-    storeroom(k, rect(xb + T, yl + T, h, h));
-    let furniture = k.b.structure..k.b.solids.len();
-    k.b.pads_by(4, furniture);
-}
-
-/// The U of counters along the north, west, and east walls, the island, and
-/// a checkered floor.
-fn kitchen(k: &mut Kit, r: Aabb2) {
-    let d = COUNTER_DEPTH;
-    k.slab(r, 0.0, 0.02, TILE[0]);
-    for x in r.min.x.ceil() as i32..r.max.x.floor() as i32 {
-        for y in r.min.y.ceil() as i32..r.max.y.floor() as i32 {
-            if (x + y) % 2 == 0 {
-                let (x, y) = (x as f32, y as f32);
-                k.slab(rect(x, y, x + 1.0, y + 1.0), 0.0, 0.025, TILE[1]);
-            }
-        }
-    }
-
-    let fridge = rect(r.max.x - 1.05, r.min.y, r.max.x, r.min.y + 1.3);
-    k.block(fridge, TALL, STEEL);
-    let mid = fridge.center().y;
-    for y in [mid - 0.12, mid + 0.08] {
-        k.slab(
-            rect(fridge.min.x - 0.04, y, fridge.min.x, y + 0.04),
-            0.7,
-            1.5,
-            DARK,
-        );
-    }
-    k.slab(
-        rect(fridge.min.x - 0.01, mid - 0.01, fridge.min.x, mid + 0.01),
-        0.05,
-        TALL - 0.05,
-        DARK,
+    // The north run, wall to fridge, with a sink and a range in it.
+    let fridge = rect(h - 7.0, -h, h, -h + 7.0);
+    let north = rect(-h, -h, fridge.min.x, -h + DEPTH);
+    let sink = k.range(-14.0, -11.0);
+    let range = k.range(-1.0, 3.0);
+    let (range_lo, range_hi) = (range - 3.5, range + 3.5);
+    k.counter(
+        rect(north.min.x, north.min.y, range_lo, north.max.y),
+        Side::South,
     );
-    let tall = rect(r.max.x - d, fridge.max.y, r.max.x, fridge.max.y + 0.9);
-    k.block(tall, TALL, CABINET);
-    let east_end = tall.max.y + k.range(3.0, 4.5);
-    k.counter(rect(r.max.x - d, tall.max.y, r.max.x, east_end));
-    k.uppers(rect(r.max.x - 0.45, tall.max.y, r.max.x, east_end));
+    k.counter(
+        rect(range_hi, north.min.y, north.max.x, north.max.y),
+        Side::South,
+    );
+    k.stove(rect(range_lo, north.min.y, range_hi, north.max.y));
+    k.sink(Vec2::new(sink, north.min.y + DEPTH / 2.0));
+    k.window(sink);
+    k.fridge(fridge);
 
-    let run_end = fridge.min.x;
-    let len = run_end - r.min.x;
-    let stove = r.min.x + len * k.range(0.55, 0.7);
-    let sink = r.min.x + len * k.range(0.25, 0.38);
-    k.counter(rect(r.min.x, r.min.y, stove - 0.55, r.min.y + d));
-    k.counter(rect(stove + 0.55, r.min.y, run_end, r.min.y + d));
-    k.stove(rect(stove - 0.55, r.min.y, stove + 0.55, r.min.y + d));
-    k.slab(
-        rect(sink - 0.45, r.min.y + 0.2, sink + 0.45, r.min.y + 0.7),
-        COUNTER + 0.04,
-        COUNTER + 0.07,
-        STEEL,
-    );
-    k.disc(
-        Vec2::new(sink, r.min.y + 0.12),
-        0.04,
-        COUNTER,
-        COUNTER + 0.35,
-        STEEL,
-    );
-    k.slab(
-        rect(sink - 0.8, r.min.y - 0.02, sink + 0.8, r.min.y + 0.02),
-        1.0,
-        1.8,
-        GLASS,
-    );
-    for (lo, hi) in [
-        (r.min.x, sink - 0.9),
-        (sink + 0.9, stove - 0.65),
-        (stove + 0.65, run_end),
-    ] {
-        k.uppers(rect(lo, r.min.y, hi, r.min.y + 0.45));
-    }
+    // The west run, from the corner to past the middle.
+    let west_end = k.range(4.0, 8.0);
+    let west = rect(-h, north.max.y, -h + DEPTH, west_end);
+    k.counter(west, Side::East);
 
-    let leg = k.range(5.0, 6.5);
-    k.counter(rect(r.min.x, r.min.y + d, r.min.x + d, r.min.y + leg));
-    k.uppers(rect(r.min.x, r.min.y + 0.45, r.min.x + 0.45, r.min.y + leg));
-    k.bin(Vec2::new(r.min.x + 0.4, r.min.y + leg + 0.5));
+    // Wall cabinets over the west run, and over the north run between the
+    // range and the fridge.
+    k.uppers(rect(
+        -h,
+        north.max.y + 1.0,
+        -h + UPPER_DEPTH,
+        west_end - 1.0,
+    ));
+    let right_uppers = rect(range_hi + 1.0, -h, fridge.min.x, -h + UPPER_DEPTH);
+    k.uppers(right_uppers);
 
-    let c = Vec2::new(
-        (r.min.x + r.max.x) / 2.0 + k.range(-1.0, 1.0),
-        r.min.y + d + 2.5 + 0.8,
-    );
-    let island = Aabb2::centered(c, Vec2::new(2.3, 0.8));
-    k.block(island, COUNTER, CABINET);
-    k.slab(
-        rect(
-            island.min.x - 0.05,
-            island.min.y - 0.05,
-            island.max.x + 0.05,
-            island.max.y + 0.3,
-        ),
-        COUNTER,
-        COUNTER + 0.06,
-        STONE,
-    );
-    for dx in [-1.2, 1.2] {
-        k.slab(
-            Aabb2::centered(c + Vec2::new(dx, 0.0), Vec2::new(0.015, 0.015)),
-            1.75,
-            WALL_HEIGHT,
-            DARK,
-        );
-        k.disc(
-            c + Vec2::new(dx, 0.0),
-            0.25,
-            1.6,
-            1.75,
-            paint([240, 210, 150], Material::Plain),
-        );
-    }
-    for dx in [-1.4, 0.0, 1.4] {
-        let at = Vec2::new(c.x + dx, island.max.y + 0.55);
-        k.pillar(at, 0.18, 0.32, DARK);
-        k.disc(at, 0.24, 0.32, 0.37, LIGHT_WOOD);
-    }
-    let nook = rect(r.min.x, island.max.y + 1.0, r.max.x, r.max.y);
-    if let Some(c) = k.scatter(nook, Vec2::new(1.3, 1.3), 1.4) {
-        k.table(
-            c,
-            Vec2::new(0.6, 0.6),
-            &[(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)],
-        );
-    }
-}
-
-fn dining(k: &mut Kit, r: Aabb2) {
-    k.slab(r, 0.0, 0.02, FLOOR_WOOD);
-    let c = Vec2::new(
-        r.center().x + k.range(-1.5, 1.5),
-        r.center().y + k.range(-0.8, 0.8),
-    );
-    let half = Vec2::new(3.0, 1.0);
-    let rug = k.pick(&RUG);
-    k.slab(Aabb2::centered(c, half).grow(1.4), 0.02, 0.03, rug);
-    k.table(
-        c,
-        half,
-        &[
-            (-2.0 / 3.0, -1.0),
-            (0.0, -1.0),
-            (2.0 / 3.0, -1.0),
-            (-2.0 / 3.0, 1.0),
-            (0.0, 1.0),
-            (2.0 / 3.0, 1.0),
-            (-1.0, 0.0),
-            (1.0, 0.0),
-        ],
-    );
-    k.disc(c, 0.35, 1.6, 1.8, paint([240, 210, 150], Material::Plain));
-    k.slab(
-        Aabb2::centered(c, Vec2::new(0.02, 0.02)),
-        1.8,
-        WALL_HEIGHT,
-        DARK,
-    );
-
-    let y = r.center().y;
-    let sideboard = rect(r.min.x, y - 1.75, r.min.x + 0.6, y + 1.75);
-    k.block(sideboard, COUNTER, WOOD);
-    k.slab(sideboard.grow(0.03), COUNTER, COUNTER + 0.04, LIGHT_WOOD);
-    let hutch = rect(r.min.x, r.max.y - 3.0, r.min.x + 0.6, r.max.y - 1.0);
-    k.block(hutch, TALL, WOOD);
-    k.slab(
-        rect(
-            hutch.max.x,
-            hutch.min.y + 0.15,
-            hutch.max.x + 0.02,
-            hutch.max.y - 0.15,
-        ),
-        1.0,
-        1.8,
-        GLASS,
-    );
-    k.plant(Vec2::new(r.max.x - 0.7, r.min.y + 0.7));
-    k.plant(Vec2::new(r.max.x - 0.7, r.max.y - 0.7));
-    if let Some(c) = k.scatter(r, Vec2::new(0.5, 0.35), 1.5) {
-        k.block(Aabb2::centered(c, Vec2::new(0.5, 0.35)), 0.5, STEEL);
-    }
-    for _ in 0..2 {
-        if let Some(c) = k.scatter(r, Vec2::new(0.45, 0.45), 1.5) {
-            k.plant(c);
-        }
-    }
-}
-
-/// A sofa, armchair, and coffee table facing a TV on the outer wall, with
-/// bookshelves.
-fn living(k: &mut Kit, r: Aabb2) {
-    k.slab(r, 0.0, 0.02, paint([150, 112, 80], Material::Wood));
-    let x = r.center().x + k.range(-1.0, 1.0);
-    let stand = rect(x - 1.6, r.max.y - 0.6, x + 1.6, r.max.y);
-    k.block(stand, 0.4, WOOD);
-    k.slab(
-        rect(x - 1.2, r.max.y - 0.36, x + 1.2, r.max.y - 0.3),
-        0.45,
-        1.25,
-        DARK,
-    );
-
-    let y = r.max.y - 5.5;
-    let rug = k.pick(&RUG);
-    k.slab(rect(x - 2.6, y - 0.4, x + 2.6, y + 3.0), 0.02, 0.03, rug);
-    k.block(rect(x - 2.1, y - 0.5, x + 2.1, y + 0.5), 0.25, SOFA);
-    k.block(rect(x - 2.4, y - 0.8, x + 2.4, y - 0.5), 0.55, SOFA);
-    for ax in [x - 2.4, x + 2.1] {
-        k.block(rect(ax, y - 0.5, ax + 0.3, y + 0.5), 0.38, SOFA);
-    }
-    k.block(rect(x - 0.9, y + 1.3, x + 0.9, y + 2.2), 0.25, LIGHT_WOOD);
-    let arm = Vec2::new(x + 3.8, y + 1.6);
-    k.block(Aabb2::centered(arm, Vec2::new(0.5, 0.5)), 0.25, SOFA);
-    k.block(
-        rect(arm.x + 0.5, arm.y - 0.5, arm.x + 0.8, arm.y + 0.5),
-        0.55,
-        SOFA,
-    );
-
-    for i in 0..2 {
-        let y0 = r.min.y + 1.5 + i as f32 * 2.2;
-        k.shelving(
-            rect(r.min.x, y0, r.min.x + 0.6, y0 + 2.0),
-            &[Vec2::new(1.0, 0.0)],
-        );
-    }
-    k.plant(Vec2::new(r.max.x - 0.7, r.max.y - 0.7));
-
-    if let Some(c) = k.scatter(r, Vec2::new(1.0, 0.8), 1.5) {
-        k.block(rect(c.x - 1.0, c.y - 0.1, c.x + 1.0, c.y + 0.5), 0.8, DARK);
-        k.block(rect(c.x - 0.6, c.y - 0.8, c.x + 0.6, c.y - 0.4), 0.3, DARK);
-    }
-    if let Some(c) = k.scatter(r, Vec2::new(1.0, 1.0), 1.5) {
-        k.table(c, Vec2::new(0.8, 0.45), &[(0.0, -1.0)]);
-    }
-    for _ in 0..2 {
-        if let Some(c) = k.scatter(r, Vec2::new(0.5, 0.8), 1.5) {
-            k.block(Aabb2::centered(c, Vec2::new(0.5, 0.5)), 0.25, SOFA);
-            k.block(rect(c.x - 0.5, c.y + 0.5, c.x + 0.5, c.y + 0.8), 0.55, SOFA);
-        }
-    }
-    for _ in 0..3 {
-        if let Some(c) = k.scatter(r, Vec2::new(0.45, 0.45), 1.5) {
-            k.plant(c);
-        }
-    }
-}
-
-fn hallway(k: &mut Kit, r: Aabb2) {
-    let c = r.center().x;
-    k.slab(
-        rect(c - 1.0, r.min.y + 1.5, c + 1.0, r.max.y - 1.5),
+    // Pads onto the counters, and from the counter onto the fridge and the
+    // wall cabinets.
+    k.pad(Vec2::new(sink + 4.0, north.max.y + 1.6), 0.0, FLOOR_PAD);
+    k.pad(
+        Vec2::new(west.max.x + 1.6, (west.min.y + west.max.y) / 2.0),
         0.0,
-        0.02,
-        RUG[1],
+        FLOOR_PAD,
     );
-    k.plant(Vec2::new(c, r.min.y + 0.7));
-    k.plant(Vec2::new(c, r.max.y - 0.7));
+    // Beside both the fridge and the wall cabinets: high enough for either.
+    k.pad(
+        Vec2::new(fridge.min.x - 1.4, north.max.y - 1.4),
+        COUNTER,
+        UPPER_TOP - COUNTER + 3.0,
+    );
+    k.pad(
+        Vec2::new(
+            (right_uppers.min.x + right_uppers.max.x) / 2.0,
+            north.max.y - 1.2,
+        ),
+        COUNTER,
+        UPPER_TOP - COUNTER + 3.0,
+    );
+
+    north_top(k, north, range_lo, range_hi, sink, fridge.min.x);
+    west_top(k, west);
+
+    let island = Aabb2::centered(
+        Vec2::new(k.range(0.0, 4.0), k.range(-4.0, -2.0)),
+        Vec2::new(6.0, 3.0),
+    );
+    k.island(island);
+    k.pad(
+        Vec2::new(island.center().x - 3.0, island.max.y + 1.6),
+        0.0,
+        FLOOR_PAD,
+    );
+
+    let table = Aabb2::centered(
+        Vec2::new(k.range(5.0, 8.0), k.range(10.0, 12.0)),
+        Vec2::new(6.0, 4.0),
+    );
+    k.table(table);
+    k.pad(
+        Vec2::new(table.max.x + 1.6, table.min.y + 1.0),
+        0.0,
+        TABLE_PAD,
+    );
+
+    k.bin(Vec2::new(h - 2.0, h - 2.0));
+    clutter(k);
 }
 
-/// Shelving along two walls and in rows, with two-unit aisles.
-fn pantry(k: &mut Kit, r: Aabb2) {
-    k.slab(r, 0.0, 0.02, CONCRETE);
-    k.shelving(
-        rect(r.min.x + 2.0, r.min.y, r.max.x, r.min.y + 0.6),
-        &[Vec2::new(0.0, 1.0)],
-    );
-    k.shelving(
-        rect(r.max.x - 0.6, r.min.y + 0.6, r.max.x, r.max.y),
-        &[Vec2::new(-1.0, 0.0)],
-    );
-    let (y0, y1) = (r.min.y + 2.6, r.max.y - 2.2);
-    let mut x = r.min.x + 2.0;
-    while x + 1.0 <= r.max.x - 2.6 {
-        k.shelving(
-            rect(x, y0, x + 1.0, y1),
-            &[Vec2::new(-1.0, 0.0), Vec2::new(1.0, 0.0)],
-        );
-        x += 3.0;
-    }
-    for i in 0..3 {
-        let at = Vec2::new(r.max.x - 1.5 - i as f32 * 0.8, r.max.y - 0.5);
-        k.block(
-            Aabb2::centered(at, Vec2::new(0.3, 0.3)),
-            0.5,
-            CARDBOARD[i % 2],
-        );
+/// Big checkered tiles.
+fn floor(k: &mut Kit) {
+    let h = HALF_EXTENT;
+    k.slab(rect(-h, -h, h, h), 0.0, 0.02, TILE[0]);
+    let cell = 4.0;
+    let n = (2.0 * h / cell).ceil() as i32;
+    for i in 0..n {
+        for j in 0..n {
+            if (i + j) % 2 == 0 {
+                let (x, y) = (-h + i as f32 * cell, -h + j as f32 * cell);
+                let t = rect(x, y, (x + cell).min(h), (y + cell).min(h));
+                k.slab(t, 0.02, 0.03, TILE[1]);
+            }
+        }
     }
 }
 
-fn laundry(k: &mut Kit, r: Aabb2) {
-    k.slab(r, 0.0, 0.02, paint([196, 210, 214], Material::Tile));
-    let y = r.center().y - 1.5;
-    for i in 0..2 {
-        let y0 = y + i as f32 * 0.95;
-        let m = rect(r.max.x - 0.9, y0, r.max.x, y0 + 0.9);
-        k.block(m, 0.55, WHITE);
+fn baseboards(k: &mut Kit) {
+    let h = HALF_EXTENT;
+    let board = paint([250, 248, 240], Material::Wood);
+    for r in [
+        rect(-h, -h, h, -h + 0.08),
+        rect(-h, h - 0.08, h, h),
+        rect(-h, -h, -h + 0.08, h),
+        rect(h - 0.08, -h, h, h),
+    ] {
+        k.slab(r, 0.0, 1.0, board);
+    }
+}
+
+/// A toaster and a knife block between the sink and the range, a kettle
+/// past the range, and jars along the wall to the fridge.
+fn north_top(k: &mut Kit, run: Aabb2, range_lo: f32, range_hi: f32, sink: f32, end: f32) {
+    let y = run.min.y + DEPTH / 2.0;
+    let toaster = (sink + 4.5 + range_lo - 1.0) / 2.0;
+    if toaster - 1.5 > sink + 3.5 && toaster + 1.5 < range_lo - 3.0 {
+        k.raised(
+            rect(toaster - 1.5, y - 1.0, toaster + 1.5, y + 1.0),
+            2.2,
+            STEEL,
+        );
         k.slab(
-            rect(m.min.x - 0.02, m.min.y + 0.2, m.min.x, m.max.y - 0.2),
-            0.12,
-            0.42,
+            rect(toaster - 1.0, y - 0.3, toaster + 1.0, y + 0.3),
+            COUNTER + 2.2,
+            COUNTER + 2.25,
             DARK,
         );
     }
-    k.counter(rect(r.max.x - COUNTER_DEPTH, y + 1.9, r.max.x, y + 3.4));
-    k.pillar(Vec2::new(r.max.x - 0.6, r.min.y + 0.6), 0.45, 1.8, WHITE);
-    k.shelving(
-        rect(r.min.x + 2.5, r.min.y, r.min.x + 9.5, r.min.y + 0.5),
-        &[Vec2::new(0.0, 1.0)],
+    k.raised(
+        rect(
+            range_lo - 2.6,
+            run.min.y + 0.6,
+            range_lo - 1.4,
+            run.min.y + 1.8,
+        ),
+        2.6,
+        WOOD,
     );
-    let run = rect(
-        r.min.x + 2.5,
-        r.max.y - COUNTER_DEPTH,
-        r.max.x - 5.5,
-        r.max.y,
+    k.raised_disc(Vec2::new(range_hi + 2.6, y), 1.1, 2.4, CERAMIC[2]);
+    k.slab(
+        rect(range_hi + 3.5, y - 0.15, range_hi + 4.4, y + 0.15),
+        COUNTER + 1.6,
+        COUNTER + 1.9,
+        DARK,
     );
-    k.counter(run);
-    k.uppers(rect(run.min.x, r.max.y - 0.45, run.max.x, r.max.y));
-    k.block(
-        rect(run.max.x, r.max.y - 0.7, run.max.x + 1.0, r.max.y),
-        TALL,
-        WHITE,
-    );
-    for _ in 0..3 {
-        if let Some(c) = k.scatter(r, Vec2::new(0.9, 0.5), 1.5) {
-            k.block(Aabb2::centered(c, Vec2::new(0.9, 0.5)), 0.45, LIGHT_WOOD);
-        }
-    }
-    for _ in 0..2 {
-        if let Some(c) = k.scatter(r, Vec2::new(0.3, 0.3), 1.2) {
-            k.pillar(c, 0.3, 0.4, paint([214, 200, 160], Material::Fabric));
-        }
+    let mut x = range_hi + 5.5;
+    while x < end - 1.0 {
+        let jar = k.pick(&CERAMIC);
+        let tall = k.range(1.2, 2.2);
+        k.raised_disc(Vec2::new(x, run.min.y + 1.0), 0.6, tall, jar);
+        x += k.range(1.6, 2.4);
     }
 }
 
-/// Stacks of boxes, rows of shelving, and a chest freezer.
-fn storeroom(k: &mut Kit, r: Aabb2) {
-    k.slab(r, 0.0, 0.02, CONCRETE);
-    k.shelving(
-        rect(r.min.x + 2.0, r.max.y - 0.6, r.max.x - 2.0, r.max.y),
-        &[Vec2::new(0.0, -1.0)],
+/// A cutting board, flat enough to walk onto, and a bowl of fruit.
+fn west_top(k: &mut Kit, run: Aabb2) {
+    let x = (run.min.x + run.max.x) / 2.0;
+    let y = k.range(run.min.y + 3.0, run.max.y - 7.0);
+    k.slab(
+        rect(x - 1.5, y - 2.0, x + 1.5, y + 2.0),
+        COUNTER,
+        COUNTER + 0.15,
+        LIGHT_WOOD,
     );
-    k.block(
-        rect(r.max.x - 0.8, r.min.y + 2.5, r.max.x, r.min.y + 4.1),
-        0.5,
-        WHITE,
-    );
-    for _ in 0..2 {
-        if let Some(c) = k.scatter(r, Vec2::new(3.0, 0.5), 2.0) {
-            k.shelving(
-                Aabb2::centered(c, Vec2::new(3.0, 0.5)),
-                &[Vec2::new(0.0, -1.0), Vec2::new(0.0, 1.0)],
-            );
-        }
+    let bowl = Vec2::new(x, y + 4.5);
+    k.raised_disc(bowl, 1.5, 0.6, CERAMIC[1]);
+    for (dx, dy) in [(-0.5, -0.3), (0.5, 0.0), (0.0, 0.6)] {
+        let f = k.pick(&FRUIT);
+        k.disc(
+            bowl + Vec2::new(dx, dy),
+            0.45,
+            COUNTER + 0.6,
+            COUNTER + 1.3,
+            f,
+        );
     }
-    for _ in 0..6 {
-        let Some(c) = k.scatter(r, Vec2::new(1.1, 1.1), 1.5) else {
-            continue;
-        };
-        for (dx, dy) in [(-0.55, -0.55), (0.55, -0.55), (-0.55, 0.55), (0.55, 0.55)] {
-            if k.b.rng.chance(0.3) {
-                continue;
-            }
-            let half = k.range(0.35, 0.5);
-            let height = k.range(0.5, 1.4);
-            let finish = k.pick(&CARDBOARD);
-            let at = Vec2::new(c.x + dx, c.y + dy);
-            k.block(Aabb2::centered(at, Vec2::new(half, half)), height, finish);
+}
+
+/// Things on the floor: a fallen cereal box, a mug, a pet bowl, a sponge,
+/// a spoon, a pile of cookbooks reached by a stair of sugar cubes, and
+/// crumbs. Each lands somewhere clear, if it can.
+fn clutter(k: &mut Kit) {
+    let h = HALF_EXTENT;
+    let room = rect(-h + DEPTH + 1.0, -h + DEPTH + 1.0, h - 1.0, h - 1.0);
+
+    if let Some(c) = k.scatter(room, Vec2::new(3.0, 1.0), 1.2) {
+        k.block(Aabb2::centered(c, Vec2::new(3.0, 1.0)), 2.0, CARDBOARD);
+        k.slab(
+            Aabb2::centered(c + Vec2::new(0.6, 0.0), Vec2::new(1.4, 1.02)),
+            0.6,
+            1.4,
+            CERAMIC[0],
+        );
+    }
+    if let Some(c) = k.scatter(room, Vec2::new(0.8, 0.5), 1.2) {
+        let mug = k.pick(&CERAMIC);
+        k.pillar(c, 0.5, 1.0, mug);
+        k.slab(
+            Aabb2::centered(c + Vec2::new(0.6, 0.0), Vec2::new(0.12, 0.08)),
+            0.25,
+            0.75,
+            mug,
+        );
+    }
+    if let Some(c) = k.scatter(room, Vec2::new(1.1, 1.1), 1.2) {
+        k.pillar(c, 1.1, 0.5, CERAMIC[1]);
+    }
+    if let Some(c) = k.scatter(room, Vec2::new(0.9, 0.6), 1.0) {
+        k.block(Aabb2::centered(c, Vec2::new(0.9, 0.6)), 0.4, SPONGE);
+        k.slab(Aabb2::centered(c, Vec2::new(0.9, 0.6)), 0.4, 0.55, SCOURER);
+    }
+    if let Some(c) = k.scatter(room, Vec2::new(2.2, 0.5), 1.0) {
+        k.slab(Aabb2::centered(c, Vec2::new(1.4, 0.12)), 0.0, 0.1, STEEL);
+        k.disc(c + Vec2::new(1.7, 0.0), 0.45, 0.0, 0.12, STEEL);
+    }
+    if let Some(c) = k.scatter(room, Vec2::new(3.5, 2.0), 1.2) {
+        // Three cubes, each a jump higher than the last, up to the books.
+        for (i, step) in [0.7, 1.4, 2.1].into_iter().enumerate() {
+            let x = c.x - 3.5 + i as f32;
+            k.block(rect(x, c.y - 0.5, x + 1.0, c.y + 0.5), step, SUGAR);
+        }
+        let books = rect(c.x - 0.5, c.y - 2.0, c.x + 3.5, c.y + 2.0);
+        let mut y0 = 0.0;
+        for (i, finish) in BOOKS.into_iter().enumerate() {
+            let y1 = y0 + 0.7;
+            k.slab(books.grow(-0.15 * i as f32), y0, y1, finish);
+            y0 = y1;
+        }
+        k.b.solid(Footprint::Aabb(k.sym.rect(books)), y0);
+    }
+    for _ in 0..12 {
+        if let Some(c) = k.scatter(room, Vec2::new(0.2, 0.2), 0.5) {
+            k.slab(
+                Aabb2::centered(c, Vec2::new(0.15, 0.1)),
+                0.0,
+                0.12,
+                CARDBOARD,
+            );
         }
     }
 }
@@ -494,6 +367,13 @@ fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Aabb2 {
     }
 }
 
+/// Which way a cabinet faces the room, in plan coordinates.
+#[derive(Copy, Clone, Debug)]
+enum Side {
+    South,
+    East,
+}
+
 /// Places furniture in plan coordinates through the layout's symmetry.
 struct Kit<'a, 'b> {
     b: &'a mut Builder<'b>,
@@ -515,6 +395,27 @@ impl Kit<'_, '_> {
 
     fn pillar(&mut self, c: Vec2, radius: f32, height: f32, paint: Paint) {
         self.b.pillar(self.sym.pt(c), radius, height, paint);
+    }
+
+    /// A box that blocks from `y0` to `y1`.
+    fn platform(&mut self, r: Aabb2, y0: f32, y1: f32, paint: Paint) {
+        self.b.platform(Shape::Box, self.sym.rect(r), y0, y1, paint);
+    }
+
+    /// A box standing on the counter top, `tall` high.
+    fn raised(&mut self, r: Aabb2, tall: f32, paint: Paint) {
+        self.platform(r, COUNTER, COUNTER + tall, paint);
+    }
+
+    /// A cylinder standing on the counter top, `tall` high.
+    fn raised_disc(&mut self, c: Vec2, radius: f32, tall: f32, paint: Paint) {
+        let r = Aabb2::centered(self.sym.pt(c), Vec2::new(radius, radius));
+        self.b
+            .platform(Shape::Cylinder, r, COUNTER, COUNTER + tall, paint);
+    }
+
+    fn pad(&mut self, c: Vec2, y: f32, apex: f32) {
+        self.b.pad(self.sym.pt(c), y, apex);
     }
 
     /// A drawn box over `r` from `y0` to `y1`.
@@ -540,36 +441,8 @@ impl Kit<'_, '_> {
         );
     }
 
-    fn wall_x<const N: usize>(&mut self, x: f32, doors: [f32; N], width: f32) {
-        let h = HALF_EXTENT;
-        for (lo, hi) in gaps(-h, h, &doors, width) {
-            self.block(rect(x - T, lo, x + T, hi), WALL_HEIGHT, WALL);
-        }
-        for d in doors {
-            let r = rect(x - T, d - width / 2.0, x + T, d + width / 2.0);
-            self.door(r);
-        }
-    }
-
-    fn wall_y<const N: usize>(&mut self, y: f32, x0: f32, x1: f32, doors: [f32; N], width: f32) {
-        for (lo, hi) in gaps(x0, x1, &doors, width) {
-            self.block(rect(lo, y - T, hi, y + T), WALL_HEIGHT, WALL);
-        }
-        for d in doors {
-            let r = rect(d - width / 2.0, y - T, d + width / 2.0, y + T);
-            self.door(r);
-        }
-    }
-
-    /// A lintel over the gap `r`, and room to walk through it.
-    fn door(&mut self, r: Aabb2) {
-        self.slab(r, 2.0, WALL_HEIGHT, WALL);
-        let clear = self.sym.rect(r.grow(1.2));
-        self.b.keep_out.push(clear);
-    }
-
-    /// A centre in `room` where a box of `half` extents clears doorways and
-    /// stays `gap` from other furniture, if one turns up.
+    /// A centre in `room` where a box of `half` extents stays `gap` from
+    /// everything else, if one turns up.
     fn scatter(&mut self, room: Aabb2, half: Vec2, gap: f32) -> Option<Vec2> {
         for _ in 0..40 {
             let c = Vec2::new(
@@ -583,164 +456,272 @@ impl Kit<'_, '_> {
         None
     }
 
-    /// A base cabinet under a stone top.
-    fn counter(&mut self, r: Aabb2) {
-        self.block(r, COUNTER, CABINET);
-        self.slab(r.grow(0.03), COUNTER, COUNTER + 0.06, STONE);
+    /// A base cabinet over a plinth set back from the front on `side`,
+    /// under a stone top. Doors and handles on the face.
+    fn counter(&mut self, r: Aabb2, side: Side) {
+        let plinth = match side {
+            Side::South => rect(r.min.x, r.min.y, r.max.x, r.max.y - KICK_DEPTH),
+            Side::East => rect(r.min.x, r.min.y, r.max.x - KICK_DEPTH, r.max.y),
+        };
+        self.block(plinth, KICK, DARK);
+        self.platform(r, KICK, COUNTER - TOP, CABINET);
+        self.platform(r, COUNTER - TOP, COUNTER, STONE);
+        self.fronts(r, side, KICK, COUNTER - TOP);
     }
 
-    /// Wall cabinets above head height. Drawn only, so they never block.
-    fn uppers(&mut self, r: Aabb2) {
-        if r.max.x > r.min.x && r.max.y > r.min.y {
-            self.slab(r, 1.3, 1.85, CABINET);
+    /// Door seams and handles every few units along a cabinet face.
+    fn fronts(&mut self, r: Aabb2, side: Side, y0: f32, y1: f32) {
+        let (lo, hi) = match side {
+            Side::South => (r.min.x, r.max.x),
+            Side::East => (r.min.y, r.max.y),
+        };
+        let doors = ((hi - lo) / 4.5).round().max(1.0) as i32;
+        let w = (hi - lo) / doors as f32;
+        let face = |s0: f32, s1: f32, out: f32| match side {
+            Side::South => rect(s0, r.max.y, s1, r.max.y + out),
+            Side::East => rect(r.max.x, s0, r.max.x + out, s1),
+        };
+        for i in 0..doors {
+            let a = lo + i as f32 * w;
+            self.slab(face(a, a + 0.08, 0.04), y0, y1, DARK);
+            let mid = a + w / 2.0;
+            self.slab(face(mid - 0.8, mid + 0.8, 0.15), y1 - 1.2, y1 - 0.9, STEEL);
         }
     }
 
-    /// A range in the counter run along the plan's north wall, with burners,
-    /// an oven door facing south, and a hood above.
+    /// A steel range in the run: burners, an oven door, and a hood above
+    /// whose top can be stood on.
     fn stove(&mut self, r: Aabb2) {
-        self.block(r, COUNTER + 0.02, STEEL);
+        self.block(r, COUNTER, STEEL);
         let c = r.center();
-        for (dx, dy) in [(-0.25, -0.18), (0.25, -0.18), (-0.25, 0.18), (0.25, 0.18)] {
+        for (dx, dy) in [(-1.6, -1.2), (1.6, -1.2), (-1.6, 1.2), (1.6, 1.2)] {
             let at = Vec2::new(c.x + dx, c.y + dy);
-            self.disc(at, 0.13, COUNTER + 0.02, COUNTER + 0.04, DARK);
+            self.disc(at, 1.0, COUNTER, COUNTER + 0.15, DARK);
         }
         self.slab(
-            rect(r.min.x + 0.1, r.max.y, r.max.x - 0.1, r.max.y + 0.02),
-            0.08,
-            0.4,
+            rect(r.min.x + 0.6, r.max.y, r.max.x - 0.6, r.max.y + 0.06),
+            1.0,
+            6.5,
             DARK,
         );
         self.slab(
-            rect(r.min.x - 0.05, r.min.y, r.max.x + 0.05, r.min.y + 0.6),
-            1.45,
-            1.7,
+            rect(r.min.x + 1.0, r.max.y, r.max.x - 1.0, r.max.y + 0.3),
+            6.9,
+            7.3,
+            STEEL,
+        );
+        self.platform(
+            rect(r.min.x - 0.3, r.min.y, r.max.x + 0.3, r.min.y + 4.5),
+            16.0,
+            18.5,
             STEEL,
         );
         self.slab(
-            rect(c.x - 0.25, r.min.y, c.x + 0.25, r.min.y + 0.35),
-            1.7,
+            rect(c.x - 1.5, r.min.y, c.x + 1.5, r.min.y + 2.5),
+            18.5,
             WALL_HEIGHT,
             STEEL,
         );
     }
 
-    /// A table of `half` extents with a chair at each `(x, y)`, given as a
-    /// fraction of `half` with one coordinate at ±1, so it sits on that side.
-    fn table(&mut self, c: Vec2, half: Vec2, seats: &[(f32, f32)]) {
-        self.block(Aabb2::centered(c, half), 0.42, WOOD);
-        for &(fx, fy) in seats {
-            let out = if fy.abs() == 1.0 {
-                Vec2::new(0.0, fy)
-            } else {
-                Vec2::new(fx, 0.0)
-            };
-            let at = Vec2::new(c.x + fx * half.x, c.y + fy * half.y) + out * 0.4;
-            self.chair(at, out);
-        }
-    }
-
-    /// A seat facing away from `out`, with its back on that side.
-    fn chair(&mut self, at: Vec2, out: Vec2) {
-        let seat = Aabb2::centered(at, Vec2::new(0.24, 0.24));
-        self.block(seat, 0.26, WOOD);
-        let back = at + out * 0.2;
-        let half = if out.x != 0.0 {
-            Vec2::new(0.04, 0.24)
-        } else {
-            Vec2::new(0.24, 0.04)
-        };
-        self.slab(Aabb2::centered(back, half), 0.26, 0.6, WOOD);
-    }
-
-    /// A storage unit that blocks sight, with boards and goods on each face
-    /// whose outward normal is in `fronts`.
-    fn shelving(&mut self, r: Aabb2, fronts: &[Vec2]) {
-        self.block(r, TALL, SHELF);
-        for level in 0..4 {
-            let y = 0.1 + level as f32 * 0.45;
-            self.slab(r.grow(0.03), y, y + 0.04, LIGHT_WOOD);
-            if level < 3 {
-                for &n in fronts {
-                    self.goods(r, n, y + 0.04);
-                }
-            }
-        }
-    }
-
-    /// A row of jars and boxes standing at `y`, poking out of the face of `r`
-    /// that faces `n`.
-    fn goods(&mut self, r: Aabb2, n: Vec2, y: f32) {
-        let along_x = n.x == 0.0;
-        let (lo, hi) = if along_x {
-            (r.min.x, r.max.x)
-        } else {
-            (r.min.y, r.max.y)
-        };
-        let face = match (n.x > 0.0, n.x < 0.0, n.y > 0.0) {
-            (true, _, _) => r.max.x,
-            (_, true, _) => r.min.x,
-            (_, _, true) => r.max.y,
-            _ => r.min.y,
-        };
-        let mut s = lo + 0.15;
-        while s < hi - 0.3 {
-            let w = self.range(0.18, 0.32);
-            let tall = self.range(0.12, 0.32);
-            let finish = self.pick(&GOODS);
-            if self.b.rng.chance(0.6) {
-                let (a, b) = (face - 0.08, face + 0.04);
-                let (a, b) = if n.x < 0.0 || n.y < 0.0 {
-                    (2.0 * face - b, 2.0 * face - a)
-                } else {
-                    (a, b)
-                };
-                let r = if along_x {
-                    rect(s, a, s + w, b)
-                } else {
-                    rect(a, s, b, s + w)
-                };
-                if self.b.rng.chance(0.4) {
-                    let c = r.center();
-                    self.disc(c, w / 2.0, y, y + tall, finish);
-                } else {
-                    self.slab(r, y, y + tall, finish);
-                }
-            }
-            s += w + 0.14;
-        }
-    }
-
-    /// A potted plant tall enough to hide behind.
-    fn plant(&mut self, at: Vec2) {
-        let at_world = self.sym.pt(at);
-        self.b.solid(
-            Footprint::Circle {
-                center: at_world,
-                radius: 0.45,
-            },
-            1.3,
+    /// A basin and a tall tap at `c` on the counter top.
+    fn sink(&mut self, c: Vec2) {
+        let basin = Aabb2::centered(c + Vec2::new(0.0, 0.4), Vec2::new(3.0, 1.8));
+        self.slab(basin, COUNTER, COUNTER + 0.04, STEEL);
+        self.slab(basin.grow(-0.3), COUNTER + 0.04, COUNTER + 0.06, DARK);
+        let tap = c + Vec2::new(0.0, -2.2);
+        let r = Aabb2::centered(self.sym.pt(tap), Vec2::new(0.3, 0.3));
+        self.b
+            .platform(Shape::Cylinder, r, COUNTER, COUNTER + 4.0, STEEL);
+        self.slab(
+            Aabb2::centered(tap + Vec2::new(0.0, 1.0), Vec2::new(0.2, 1.2)),
+            COUNTER + 3.6,
+            COUNTER + 4.0,
+            STEEL,
         );
-        self.disc(at, 0.35, 0.0, 0.45, POT);
-        self.disc(at, 0.55, 0.45, 1.4, LEAVES);
+    }
+
+    /// A tall window over the sink, on the north wall.
+    fn window(&mut self, x: f32) {
+        let y = -HALF_EXTENT;
+        self.slab(rect(x - 5.0, y, x + 5.0, y + 0.05), 13.0, 32.0, SKY);
+        for (x0, x1) in [(x - 5.4, x - 5.0), (x - 0.2, x + 0.2), (x + 5.0, x + 5.4)] {
+            self.slab(rect(x0, y, x1, y + 0.3), 12.6, 32.4, WALL);
+        }
+        for (y0, y1) in [(12.6, 13.0), (22.3, 22.7), (32.0, 32.4)] {
+            self.slab(rect(x - 5.4, y, x + 5.4, y + 0.3), y0, y1, WALL);
+        }
+        self.slab(rect(x - 5.4, y, x + 5.4, y + 1.0), 12.4, 12.6, GLASS);
+    }
+
+    fn fridge(&mut self, r: Aabb2) {
+        self.block(r, FRIDGE, STEEL);
+        let front = r.max.y;
+        self.slab(
+            rect(r.min.x, front, r.max.x, front + 0.05),
+            11.8,
+            12.0,
+            DARK,
+        );
+        for (y0, y1) in [(5.0, 11.0), (12.8, 16.5)] {
+            self.slab(
+                rect(r.min.x + 0.8, front, r.min.x + 1.1, front + 0.4),
+                y0,
+                y1,
+                DARK,
+            );
+        }
+    }
+
+    /// Wall cabinets: they block from `UPPER_BASE` to `UPPER_TOP`, and their
+    /// tops can be stood on.
+    fn uppers(&mut self, r: Aabb2) {
+        if r.max.x <= r.min.x || r.max.y <= r.min.y {
+            return;
+        }
+        self.platform(r, UPPER_BASE, UPPER_TOP, CABINET);
+    }
+
+    /// Cabinet and stone like a counter, with a toe kick all round.
+    fn island(&mut self, r: Aabb2) {
+        self.block(r.grow(-KICK_DEPTH), KICK, DARK);
+        self.platform(r, KICK, COUNTER - TOP, CABINET);
+        self.platform(r.grow(0.4), COUNTER - TOP, COUNTER, STONE);
+        self.fronts(r, Side::South, KICK, COUNTER - TOP);
+    }
+
+    /// A table on four legs, with a chair on every side.
+    fn table(&mut self, r: Aabb2) {
+        self.platform(r, TABLE - 0.4, TABLE, WOOD);
+        let inset = 0.6;
+        for (x, y) in [
+            (r.min.x + inset, r.min.y + inset),
+            (r.max.x - inset, r.min.y + inset),
+            (r.min.x + inset, r.max.y - inset),
+            (r.max.x - inset, r.max.y - inset),
+        ] {
+            self.pillar(Vec2::new(x, y), 0.35, TABLE - 0.4, WOOD);
+        }
+        let c = r.center();
+        let across = (r.max.x - r.min.x) / 2.0;
+        let deep = (r.max.y - r.min.y) / 2.0;
+        for out in [
+            Vec2::new(0.0, -1.0),
+            Vec2::new(0.0, 1.0),
+            Vec2::new(-1.0, 0.0),
+            Vec2::new(1.0, 0.0),
+        ] {
+            let edge = if out.x == 0.0 { deep } else { across };
+            self.chair(c + out * (edge + 1.2), out);
+        }
+    }
+
+    /// A seat on four legs with its back on the `out` side.
+    fn chair(&mut self, at: Vec2, out: Vec2) {
+        let half = 1.8;
+        let seat = Aabb2::centered(at, Vec2::new(half, half));
+        self.platform(seat, SEAT - 0.4, SEAT, LIGHT_WOOD);
+        for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            let leg = at + Vec2::new(dx, dy) * (half - 0.3);
+            self.pillar(leg, 0.2, SEAT - 0.4, LIGHT_WOOD);
+        }
+        let back = at + out * (half - 0.2);
+        let span = if out.x != 0.0 {
+            Vec2::new(0.2, half)
+        } else {
+            Vec2::new(half, 0.2)
+        };
+        self.platform(Aabb2::centered(back, span), SEAT, SEAT + 4.5, LIGHT_WOOD);
     }
 
     fn bin(&mut self, at: Vec2) {
-        self.pillar(at, 0.28, 0.45, STEEL);
+        self.pillar(at, 1.5, 6.0, STEEL);
+        self.disc(at, 1.6, 6.0, 6.3, DARK);
     }
 }
 
-/// The spans of `lo..hi` left after cutting a `width` gap at each door.
-fn gaps(lo: f32, hi: f32, doors: &[f32], width: f32) -> Vec<(f32, f32)> {
-    let mut cuts: Vec<f32> = doors.to_vec();
-    cuts.sort_by(f32::total_cmp);
-    let mut out = Vec::new();
-    let mut from = lo;
-    for d in cuts {
-        out.push((from, d - width / 2.0));
-        from = d + width / 2.0;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Body, Input, SceneKind};
+    use crate::physics::{GRAVITY, HEIGHT, RADIUS, blocks, step};
+    use crate::world::World;
+
+    const _: () = assert!(COUNTER >= 8.0 * HEIGHT, "counters tower over avatars");
+
+    fn kitchens() -> impl Iterator<Item = World> {
+        (0..30).map(|seed| World::generate(SceneKind::Kitchen, seed))
     }
-    out.push((from, hi));
-    out.retain(|(a, b)| b > a);
-    out
+
+    fn apex(d: &crate::world::Pad) -> f32 {
+        d.y + d.boost * d.boost / (2.0 * GRAVITY)
+    }
+
+    #[test]
+    fn the_walls_tower_and_the_counters_stand_eight_avatars_tall() {
+        for w in kitchens() {
+            let top = w.solids.iter().map(|s| s.height).fold(0.0, f32::max);
+            assert!(top >= 35.0, "walls {top}");
+            assert!(
+                w.solids.iter().any(|s| s.height == COUNTER),
+                "a counter top"
+            );
+            assert!(w.solids.iter().any(|s| s.height == FRIDGE), "a fridge");
+        }
+    }
+
+    #[test]
+    fn some_pad_reaches_the_counter_the_fridge_and_the_wall_cabinets() {
+        for w in kitchens() {
+            for (top, what) in [
+                (COUNTER, "counter"),
+                (FRIDGE, "fridge"),
+                (UPPER_TOP, "wall cabinets"),
+            ] {
+                let reaches = w.pads.iter().any(|d| {
+                    apex(d) > top + 1.0
+                        && w.solids
+                            .iter()
+                            .any(|s| s.height == top && s.shape.distance(d.center) < d.radius + 1.0)
+                });
+                assert!(reaches, "no pad onto the {what}");
+            }
+            let floor_pads = w.pads.iter().filter(|d| d.y == 0.0).count();
+            assert!(floor_pads >= 3, "{floor_pads} floor pads");
+        }
+    }
+
+    #[test]
+    fn there_is_room_to_crawl_under_the_counters() {
+        for w in kitchens() {
+            let mut slot = None;
+            'search: for i in -200..200 {
+                for j in -200..200 {
+                    let p = Vec2::new(i as f32 * 0.1, j as f32 * 0.1);
+                    let overhead = w
+                        .solids
+                        .iter()
+                        .any(|s| s.base == KICK && s.shape.distance(p) == 0.0);
+                    let clear = w
+                        .solids
+                        .iter()
+                        .filter(|s| blocks(s, 0.0))
+                        .all(|s| s.shape.distance(p) >= RADIUS + 0.01);
+                    if overhead && clear {
+                        slot = Some(p);
+                        break 'search;
+                    }
+                }
+            }
+            let Some(p) = slot else {
+                panic!("no toe-kick slot");
+            };
+            let body = Body {
+                pos: p,
+                ..Body::default()
+            };
+            let after = step(body, &Input::default(), 0.0, &w);
+            assert_eq!((after.pos, after.y), (p, 0.0), "an avatar fits at {p:?}");
+        }
+    }
 }
