@@ -9,7 +9,7 @@ use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
-use web_sys::{Element, KeyboardEvent, MouseEvent};
+use web_sys::{Element, KeyboardEvent, MouseEvent, PointerEvent};
 
 use crate::collab::{self, Session};
 use crate::debug;
@@ -20,6 +20,8 @@ type Sv = StoredValue<Shared, LocalStorage>;
 const NAME_KEY: &str = "lightseek.name";
 /// Spectator orbit radians per pixel of drag.
 const ORBIT_PER_PX: f32 = 0.006;
+/// A finger drag turns this many times as far as the same mouse travel.
+const TOUCH_TURN: f64 = 1.6;
 
 fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok().flatten()
@@ -85,14 +87,70 @@ fn on_mouse(sv: Sv, e: &MouseEvent) {
         return;
     }
     let (dx, dy) = (f64::from(e.movement_x()), f64::from(e.movement_y()));
-    sv.with_value(|sh| {
+    sv.with_value(|sh| look(&mut sh.borrow_mut(), dx, dy));
+}
+
+/// Pixels of drag turn you, or circle a spectator's camera.
+fn look(p: &mut Play, dx: f64, dy: f64) {
+    match p.camera {
+        Camera::Follow if !p.controls.scripted() => p.controls.turn(dx, dy),
+        Camera::Follow => {}
+        Camera::Spectate(_) => p.orbit_yaw -= dx as f32 * ORBIT_PER_PX,
+    }
+}
+
+#[derive(Copy, Clone)]
+enum Finger {
+    Down,
+    Move,
+    Up,
+}
+
+/// A finger on the canvas: the left thumb steers, other fingers look.
+fn on_touch(sv: Sv, e: &PointerEvent, finger: Finger) {
+    if e.pointer_type() != "touch" {
+        return;
+    }
+    e.prevent_default();
+    let (id, x, y) = (
+        e.pointer_id(),
+        f64::from(e.client_x()),
+        f64::from(e.client_y()),
+    );
+    let (ui, knob) = sv.with_value(|sh| {
         let mut p = sh.borrow_mut();
-        match p.camera {
-            Camera::Follow if !p.controls.scripted() => p.controls.turn(dx, dy),
-            Camera::Follow => {}
-            Camera::Spectate(_) => p.orbit_yaw -= dx as f32 * ORBIT_PER_PX,
+        p.touched = true;
+        match finger {
+            Finger::Down => {
+                let width = p
+                    .canvas
+                    .as_ref()
+                    .map_or(0.0, |c| f64::from(c.client_width()));
+                p.touches.down(id, x, y, width);
+                if let Some(c) = &p.canvas {
+                    let _ = c.set_pointer_capture(id);
+                }
+            }
+            Finger::Move => {
+                if let Some((dx, dy)) = p.touches.moved(id, x, y) {
+                    look(&mut p, dx * TOUCH_TURN, dy * TOUCH_TURN);
+                }
+            }
+            Finger::Up => p.touches.up(id),
         }
+        let stick = p.touches.stick();
+        p.controls.stick(stick);
+        (p.ui, p.touches.knob())
     });
+    if ui.stick.with_untracked(|k| *k != knob) {
+        ui.stick.set(knob);
+    }
+}
+
+/// The on-screen Jump button, pressed or let go.
+fn jump_button(sv: Sv, e: &PointerEvent, down: bool) {
+    e.prevent_default();
+    sv.with_value(|sh| sh.borrow_mut().controls.jump(down));
 }
 
 #[component]
@@ -157,8 +215,12 @@ pub fn App() -> impl IntoView {
     });
 
     let lock = move |_: MouseEvent| {
-        let follow = sv.with_value(|sh| sh.borrow().camera == Camera::Follow);
+        let (follow, touched) = sv.with_value(|sh| {
+            let p = sh.borrow();
+            (p.camera == Camera::Follow, p.touched)
+        });
         if follow
+            && !touched
             && ui.screen.get_untracked() == Screen::Game
             && let Some(c) = canvas.get_untracked()
         {
@@ -175,6 +237,10 @@ pub fn App() -> impl IntoView {
                 data-testid="stage"
                 on:click=lock
                 on:mousemove=move |e: MouseEvent| on_mouse(sv, &e)
+                on:pointerdown=move |e: PointerEvent| on_touch(sv, &e, Finger::Down)
+                on:pointermove=move |e: PointerEvent| on_touch(sv, &e, Finger::Move)
+                on:pointerup=move |e: PointerEvent| on_touch(sv, &e, Finger::Up)
+                on:pointercancel=move |e: PointerEvent| on_touch(sv, &e, Finger::Up)
                 on:contextmenu=move |e: MouseEvent| e.prevent_default()
             ></canvas>
             {move || match ui.screen.get() {
@@ -187,7 +253,7 @@ pub fn App() -> impl IntoView {
                         .into_any()
                 }
                 Screen::Lobby => view! { <LobbyPanel sv ui room=room.clone()/> }.into_any(),
-                Screen::Game => view! { <HudPanel ui/> }.into_any(),
+                Screen::Game => view! { <HudPanel sv ui/> }.into_any(),
                 Screen::Results => view! { <ResultsPanel ui/> }.into_any(),
             }}
             <ul class="toasts" data-testid="toasts">
@@ -429,7 +495,7 @@ fn clock(seconds: u32) -> String {
 }
 
 #[component]
-fn HudPanel(ui: Ui) -> impl IntoView {
+fn HudPanel(sv: Sv, ui: Ui) -> impl IntoView {
     let hud = move || ui.hud.get();
     view! {
         {move || {
@@ -473,10 +539,56 @@ fn HudPanel(ui: Ui) -> impl IntoView {
                                     </div>
                                 }
                             })}
-                        <p class="hint">"WASD or arrows to move · Space to jump · click to look with the mouse"</p>
+                        <p class="hint mouse-only">
+                            "WASD or arrows to move · Space to jump · click to look with the mouse"
+                        </p>
+                        <p class="hint touch-only">
+                            "Left thumb to move · drag on the right to look · Jump to jump"
+                        </p>
+                        <TouchControls sv ui/>
                     }
                 })
         }}
+    }
+}
+
+/// The stick under the left thumb while it is held, and a Jump button.
+/// Shown only on touch screens.
+#[component]
+fn TouchControls(sv: Sv, ui: Ui) -> impl IntoView {
+    let px = |v: f64| format!("{v}px");
+    view! {
+        {move || {
+            ui.stick
+                .get()
+                .map(|(origin, knob)| {
+                    view! {
+                        <div
+                            class="stick touch-only"
+                            data-testid="stick"
+                            style:left=px(origin[0])
+                            style:top=px(origin[1])
+                        >
+                            <div
+                                class="knob"
+                                style:left=px(knob[0] - origin[0])
+                                style:top=px(knob[1] - origin[1])
+                            ></div>
+                        </div>
+                    }
+                })
+        }}
+        <button
+            class="jump touch-only"
+            data-testid="jump"
+            on:pointerdown=move |e: PointerEvent| jump_button(sv, &e, true)
+            on:pointerup=move |e: PointerEvent| jump_button(sv, &e, false)
+            on:pointercancel=move |e: PointerEvent| jump_button(sv, &e, false)
+            on:pointerleave=move |e: PointerEvent| jump_button(sv, &e, false)
+            on:contextmenu=move |e: MouseEvent| e.prevent_default()
+        >
+            "Jump"
+        </button>
     }
 }
 

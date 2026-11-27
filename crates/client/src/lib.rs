@@ -5,4 +5,5 @@ pub mod draw;
 pub mod gait;
 pub mod input;
 pub mod probe;
+pub mod touch;
 pub mod ui;

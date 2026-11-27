@@ -57,6 +57,8 @@ pub struct World {
     pub kind: String,
     pub solids: usize,
     pub props: usize,
+    /// Each launch pad as `[x, y, height]`.
+    pub pads: Vec<[f32; 3]>,
 }
 
 fn name(v: impl std::fmt::Debug) -> String {
@@ -133,6 +135,11 @@ pub fn probe(view: Option<&ViewState<'_>>, camera: Camera, gpu: &str) -> Probe {
         kind: name(w.kind),
         solids: w.solids.len(),
         props: w.props.len(),
+        pads: w
+            .pads
+            .iter()
+            .map(|d| [d.center.x, d.center.y, d.y])
+            .collect(),
     });
     p.hiders_left = v.hiders_left;
     p.seconds_left = v.seconds_left;

@@ -52,6 +52,8 @@ pub struct Controls {
     jump_held: bool,
     /// A press not yet sent, so a tap shorter than a tick still jumps.
     jump_queued: bool,
+    /// A touch joystick's `mv`, while a finger holds it.
+    stick: Option<Vec2>,
     script: Option<Script>,
 }
 
@@ -65,6 +67,7 @@ impl Controls {
         self.held = [false; 4];
         self.jump_held = false;
         self.jump_queued = false;
+        self.stick = None;
     }
 
     /// The jump key or button went down or up.
@@ -115,10 +118,19 @@ impl Controls {
         self.script.is_some()
     }
 
-    /// This tick's `(mv, yaw)`.
+    /// A touch joystick's `mv`, or None once its finger lifts.
+    pub fn stick(&mut self, mv: Option<Vec2>) {
+        self.stick = mv;
+    }
+
+    /// This tick's `(mv, yaw)`: a script's, else the touch stick's, else the
+    /// keys'.
     pub fn intent(&self) -> (Vec2, f32) {
         if let Some(s) = self.script {
             return (s.mv, s.yaw);
+        }
+        if let Some(mv) = self.stick {
+            return (mv, self.yaw);
         }
         let axis = |pos: Dir, neg: Dir| {
             f32::from(u8::from(self.held[pos as usize]))
@@ -212,6 +224,16 @@ mod tests {
         assert_eq!(c.look(), engine::camera::LOOK_UP);
         c.turn(0.0, 1e6);
         assert_eq!(c.look(), engine::camera::LOOK_DOWN);
+    }
+
+    #[test]
+    fn a_touch_stick_overrides_the_keys_until_lifted() {
+        let mut c = Controls::default();
+        c.key(Dir::Forward, true);
+        c.stick(Some(Vec2::new(0.0, 0.5)));
+        assert_eq!(c.intent().0, Vec2::new(0.0, 0.5));
+        c.stick(None);
+        assert_eq!(c.intent().0, Vec2::new(1.0, 0.0));
     }
 
     #[test]

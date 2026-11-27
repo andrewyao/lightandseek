@@ -12,6 +12,7 @@ use std::time::Duration;
 use client::draw;
 use client::gait::Gaits;
 use client::input::{Controls, Ticker};
+use client::touch::Touches;
 use client::ui::{self, Camera, Hud, Screen};
 use game::{Event, LobbyConfig, Phase};
 use leptos::prelude::*;
@@ -57,6 +58,8 @@ pub struct Ui {
     pub hud: RwSignal<Option<Hud>>,
     pub winner: RwSignal<Option<&'static str>>,
     pub toasts: RwSignal<Vec<Toast>>,
+    /// The touch stick's centre and knob, in CSS pixels, while held.
+    pub stick: RwSignal<Option<([f64; 2], [f64; 2])>>,
 }
 
 impl Ui {
@@ -70,6 +73,7 @@ impl Ui {
             hud: RwSignal::new(None),
             winner: RwSignal::new(None),
             toasts: RwSignal::new(Vec::new()),
+            stick: RwSignal::new(None),
         }
     }
 }
@@ -85,6 +89,10 @@ pub struct Play {
     pub ui: Ui,
     pub session: Session,
     pub controls: Controls,
+    pub touches: Touches,
+    /// The last pointer was a finger, so a tap is not a request to lock the
+    /// mouse.
+    pub touched: bool,
     ticker: Ticker,
     pub camera: Camera,
     /// The spectator camera's turn away from behind its target.
@@ -107,6 +115,8 @@ impl Play {
             ui,
             session,
             controls: Controls::default(),
+            touches: Touches::default(),
+            touched: false,
             ticker: Ticker::default(),
             camera: Camera::Follow,
             orbit_yaw: 0.0,
