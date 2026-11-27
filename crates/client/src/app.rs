@@ -65,6 +65,17 @@ fn on_key(sv: Sv, e: &KeyboardEvent, down: bool) {
         e.prevent_default();
         sv.with_value(|sh| sh.borrow_mut().controls.key(d, down));
     }
+    if e.code() == "Space" && !on_button(e) {
+        e.prevent_default();
+        sv.with_value(|sh| sh.borrow_mut().controls.jump(down));
+    }
+}
+
+/// Space on a focused button presses it; leave that alone.
+fn on_button(e: &KeyboardEvent) -> bool {
+    e.target()
+        .and_then(|t| t.dyn_into::<Element>().ok())
+        .is_some_and(|el| el.tag_name() == "BUTTON")
 }
 
 /// Mouse travel turns you, or circles a spectator's camera. Pointer lock
@@ -462,7 +473,7 @@ fn HudPanel(ui: Ui) -> impl IntoView {
                                     </div>
                                 }
                             })}
-                        <p class="hint">"WASD or arrows to move · click to look with the mouse"</p>
+                        <p class="hint">"WASD or arrows to move · Space to jump · click to look with the mouse"</p>
                     }
                 })
         }}

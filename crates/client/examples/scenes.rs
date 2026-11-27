@@ -29,7 +29,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let gaits: Gaits = avatars
             .iter()
             .zip(POSES)
-            .map(|(a, (phase, stride))| (a.id, Pose { phase, stride }))
+            .map(|(a, (phase, stride))| {
+                (
+                    a.id,
+                    Pose {
+                        phase,
+                        stride,
+                        ..Pose::default()
+                    },
+                )
+            })
             .collect();
         let scene = draw::scene(&world, &avatars, None, &gaits);
 
@@ -41,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ("top", top.view(off.aspect())),
             (
                 "follow",
-                draw::clipped(&world, draw::follow(seeker.pos, seeker.yaw), off.aspect()),
+                draw::clipped(&world, draw::follow(seeker, seeker.yaw), off.aspect()),
             ),
         ] {
             let path = dir.join(format!("scene-{kind:?}-{name}.png").to_lowercase());

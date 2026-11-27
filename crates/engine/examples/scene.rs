@@ -49,10 +49,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let running = Pose {
         phase: FRAC_PI_2,
         stride: 1.0,
+        ..Pose::default()
     };
     let walking = Pose {
         phase: 2.0,
         stride: 0.5,
+        ..Pose::default()
     };
     for ((feet, yaw), color, pose) in [
         (seeker, [0.9, 0.2, 0.18], Pose::default()),

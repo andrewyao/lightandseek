@@ -7,7 +7,7 @@ use engine::{
     Environment, FollowCamera, Instance, Material, SceneDraw, Shape, View, Wedge, avatar_instances,
 };
 use game::rules::{CATCH_DIST, CATCH_HALF_ANGLE};
-use game::{AvatarView, PlayerId, Role, SceneKind, Status, Vec2, ViewState, World};
+use game::{AvatarView, Body, PlayerId, Role, SceneKind, Status, Vec2, ViewState, World};
 use glam::Vec3;
 
 use crate::gait::Gaits;
@@ -37,6 +37,11 @@ pub fn color(id: PlayerId, role: Role) -> [f32; 3] {
 
 pub fn ground(p: Vec2) -> Vec3 {
     Vec3::new(p.x, 0.0, p.y)
+}
+
+/// Where `body`'s feet are in world space.
+pub fn feet(body: Body) -> Vec3 {
+    Vec3::new(body.pos.x, body.y, body.pos.y)
 }
 
 pub fn environment(kind: SceneKind) -> Environment {
@@ -133,7 +138,7 @@ pub fn scene(
         .collect();
     let mut wedges = Vec::new();
     for a in avatars.iter().filter(|a| a.status == Status::Active) {
-        let feet = ground(a.body.pos);
+        let feet = feet(a.body);
         if hidden != Some(a.id) {
             instances.extend(avatar_instances(
                 feet,
@@ -159,18 +164,18 @@ pub fn scene(
     }
 }
 
-/// Third person behind `feet`, looking along `yaw`.
-pub fn follow(feet: Vec2, yaw: f32) -> FollowCamera {
-    FollowCamera::new(ground(feet), yaw)
+/// Third person behind `body`, looking along `yaw`.
+pub fn follow(body: Body, yaw: f32) -> FollowCamera {
+    FollowCamera::new(feet(body), yaw)
 }
 
 /// A spectator's camera: higher and further back than `follow`, circling
-/// `feet` at `yaw`.
-pub fn orbit(feet: Vec2, yaw: f32) -> FollowCamera {
+/// `body` at `yaw`.
+pub fn orbit(body: Body, yaw: f32) -> FollowCamera {
     FollowCamera {
         pitch: 0.6,
         distance: 9.0,
-        ..FollowCamera::new(ground(feet), yaw)
+        ..FollowCamera::new(feet(body), yaw)
     }
 }
 
@@ -329,10 +334,32 @@ mod tests {
     }
 
     #[test]
+    fn a_jumping_avatar_is_drawn_and_followed_at_its_height() {
+        let world = World::open(SceneKind::Park);
+        let mut a = avatar(1, Role::Seeker, Status::Active, Vec2::ZERO);
+        a.body.y = 2.0;
+        let s = scene(&world, &[a], None, &Gaits::default());
+        let low = s
+            .instances
+            .iter()
+            .map(|i| centre(i).y)
+            .fold(f32::INFINITY, f32::min);
+        assert!(low > 2.0 && low < 2.2, "figure stands at y = 2: {low}");
+        assert!((s.wedges[0].center.y - 2.02).abs() < 1e-5, "wedge too");
+        let cam = follow(a.body, 0.0);
+        assert_eq!(cam.target.y, 2.0);
+    }
+
+    #[test]
+    fn the_avatar_figure_is_as_tall_as_the_physics_body() {
+        assert_eq!(engine::AVATAR_HEIGHT, game::physics::HEIGHT);
+    }
+
+    #[test]
     fn the_follow_camera_stays_on_the_near_side_of_a_wall() {
         let mut world = World::generate(SceneKind::Kitchen, 3);
         world.solids.clear();
-        let open = clipped(&world, follow(Vec2::ZERO, 0.0), 1.5);
+        let open = clipped(&world, follow(Body::default(), 0.0), 1.5);
         world.solids.push(game::Solid {
             shape: game::Footprint::Aabb(game::Aabb2::centered(
                 Vec2::new(0.0, -2.0),
@@ -341,7 +368,7 @@ mod tests {
             height: 3.0,
             base: 0.0,
         });
-        let walled = clipped(&world, follow(Vec2::ZERO, 0.0), 1.5);
+        let walled = clipped(&world, follow(Body::default(), 0.0), 1.5);
         assert!(open.eye.z < -2.5, "behind the avatar: {}", open.eye);
         assert!(
             walled.eye.z > -1.8,
@@ -382,7 +409,7 @@ mod tests {
     fn backed_against_a_wall_your_own_head_never_fills_the_view() {
         let mut me = avatar(1, Role::Seeker, Status::Active, Vec2::ZERO);
         me.body.yaw = 0.0;
-        let cam = follow(me.body.pos, 0.0);
+        let cam = follow(me.body, 0.0);
         let mut drawn_at = Vec::new();
         for gap in [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0] {
             let world = backed_against_a_wall(gap);
@@ -423,7 +450,7 @@ mod tests {
     #[test]
     fn every_distance_the_eye_eases_out_through_is_clear_of_walls() {
         let g = |v: Vec3| game::Vec3::new(v.x, v.y, v.z);
-        let cam = follow(Vec2::ZERO, 0.0);
+        let cam = follow(Body::default(), 0.0);
         for height in [0.9, 1.3, 1.6, 2.5] {
             for gap in [0.2, 0.3, 0.5, 0.8, 1.5] {
                 let mut world = backed_against_a_wall(gap);

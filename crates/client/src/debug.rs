@@ -2,8 +2,9 @@
 //!
 //! - `state()` plain JSON, shaped by `client::probe`, computed at call time
 //!   so a background tab answers with the room's latest frame.
-//! - `input(fwd, strafe, yaw)` steers in place of the keyboard and mouse
-//!   until `release()`. Values are as `game::Input` reads them.
+//! - `input(fwd, strafe, yaw, jump)` steers in place of the keyboard and
+//!   mouse until `release()`. Values are as `game::Input` reads them; a
+//!   truthy `jump` holds the jump down.
 
 use client::input::Script;
 use client::probe;
@@ -39,13 +40,16 @@ pub fn install(sh: &Shared) {
     c.forget();
 
     let s = sh.clone();
-    let c = Closure::<dyn Fn(f64, f64, f64)>::new(move |fwd: f64, strafe: f64, yaw: f64| {
-        let mv = Vec2::new(fwd as f32, strafe as f32);
-        s.borrow_mut().controls.script(Some(Script {
-            mv,
-            yaw: yaw as f32,
-        }));
-    });
+    let c = Closure::<dyn Fn(f64, f64, f64, JsValue)>::new(
+        move |fwd: f64, strafe: f64, yaw: f64, jump: JsValue| {
+            let mv = Vec2::new(fwd as f32, strafe as f32);
+            s.borrow_mut().controls.script(Some(Script {
+                mv,
+                yaw: yaw as f32,
+                jump: jump.is_truthy(),
+            }));
+        },
+    );
     set(&hook, "input", c.as_ref());
     c.forget();
 

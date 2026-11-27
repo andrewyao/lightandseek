@@ -17,6 +17,8 @@ const TELEPORT: f32 = 1.5;
 /// this spans a couple of them, and the second pass irons out the ripple
 /// the first leaves.
 const SMOOTH_MS: f64 = 100.0;
+/// How quickly a figure tucks on take-off and unfolds on landing.
+const AIR_MS: f64 = 70.0;
 
 #[derive(Copy, Clone, Debug)]
 struct Gait {
@@ -28,6 +30,8 @@ struct Gait {
     speed: f32,
     /// Radians, in [0, TAU).
     phase: f32,
+    /// Eases toward 1 while airborne and 0 on the ground.
+    air: f32,
 }
 
 impl Gait {
@@ -38,11 +42,16 @@ impl Gait {
             rough: 0.0,
             speed: 0.0,
             phase: 0.0,
+            air: 0.0,
         }
     }
 
-    fn step(&mut self, pos: Vec2, now_ms: f64) {
+    fn step(&mut self, pos: Vec2, airborne: bool, now_ms: f64) {
         let dt_ms = now_ms - self.at_ms;
+        if dt_ms > 0.0 {
+            let k = 1.0 - (-dt_ms.min(MAX_GAP_MS) / AIR_MS).exp() as f32;
+            self.air += (f32::from(u8::from(airborne)) - self.air) * k;
+        }
         let moved = pos.distance(self.pos);
         if dt_ms <= 0.0 && moved == 0.0 {
             return;
@@ -80,7 +89,7 @@ impl Gaits {
         for a in avatars.iter().filter(|a| a.status == Status::Active) {
             self.0
                 .entry(a.id)
-                .and_modify(|g| g.step(a.body.pos, now_ms))
+                .and_modify(|g| g.step(a.body.pos, a.body.vy != 0.0, now_ms))
                 .or_insert_with(|| Gait::at(a.body.pos, now_ms));
         }
     }
@@ -89,7 +98,8 @@ impl Gaits {
     pub fn pose(&self, id: PlayerId) -> Pose {
         self.0.get(&id).map_or_else(Pose::default, |g| Pose {
             phase: g.phase,
-            stride: (g.speed / HIDER_SPEED).clamp(0.0, 1.0),
+            stride: (g.speed / HIDER_SPEED).clamp(0.0, 1.0) * (1.0 - g.air),
+            air: g.air,
         })
     }
 }
@@ -107,6 +117,7 @@ impl FromIterator<(PlayerId, Pose)> for Gaits {
                         rough: speed,
                         speed,
                         phase: pose.phase.rem_euclid(TAU),
+                        air: pose.air.clamp(0.0, 1.0),
                         ..Gait::at(Vec2::ZERO, f64::NEG_INFINITY)
                     };
                     (id, gait)
@@ -244,10 +255,29 @@ mod tests {
     }
 
     #[test]
+    fn a_figure_tucks_while_airborne_and_unfolds_on_landing() {
+        let mut gaits = Gaits::default();
+        let mut a = avatar(1, 0.0);
+        gaits.update(&[a], 0.0);
+        assert_eq!(gaits.pose(PlayerId(1)).air, 0.0);
+        a.body.vy = 5.0;
+        for f in 1..=12 {
+            gaits.update(&[a], f as f64 * FRAME_MS);
+        }
+        assert!(gaits.pose(PlayerId(1)).air > 0.9, "tucked in the air");
+        a.body.vy = 0.0;
+        for f in 13..=24 {
+            gaits.update(&[a], f as f64 * FRAME_MS);
+        }
+        assert!(gaits.pose(PlayerId(1)).air < 0.1, "unfolded on landing");
+    }
+
+    #[test]
     fn fixed_poses_hold_until_the_player_moves() {
         let pose = Pose {
             phase: 1.0,
             stride: 0.5,
+            ..Pose::default()
         };
         let mut gaits: Gaits = [(PlayerId(3), pose)].into_iter().collect();
         assert!((gaits.pose(PlayerId(3)).stride - 0.5).abs() < 1e-6);

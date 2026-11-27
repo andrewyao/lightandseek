@@ -1,5 +1,5 @@
 //! What the player wants each tick: held keys make `mv`, the mouse turns
-//! `yaw`, and a fixed 50 ms clock says how many ticks are due.
+//! `yaw`, Space jumps, and a fixed 50 ms clock says how many ticks are due.
 //!
 //! `mv.x` is forward and `mv.y` strafe-right, as `game::Input` reads them.
 
@@ -41,6 +41,7 @@ impl Dir {
 pub struct Script {
     pub mv: Vec2,
     pub yaw: f32,
+    pub jump: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -48,6 +49,9 @@ pub struct Controls {
     held: [bool; 4],
     yaw: f32,
     look: f32,
+    jump_held: bool,
+    /// A press not yet sent, so a tap shorter than a tick still jumps.
+    jump_queued: bool,
     script: Option<Script>,
 }
 
@@ -59,6 +63,25 @@ impl Controls {
     /// Lets go of every key, for when the window loses focus mid-press.
     pub fn release_keys(&mut self) {
         self.held = [false; 4];
+        self.jump_held = false;
+        self.jump_queued = false;
+    }
+
+    /// The jump key or button went down or up.
+    pub fn jump(&mut self, down: bool) {
+        self.jump_queued |= down && !self.jump_held;
+        self.jump_held = down;
+    }
+
+    /// Whether this tick jumps: the key is held, or was pressed since the
+    /// last tick. Consumes the press.
+    pub fn take_jump(&mut self) -> bool {
+        if let Some(s) = self.script {
+            return s.jump;
+        }
+        let jump = self.jump_held || self.jump_queued;
+        self.jump_queued = false;
+        jump
     }
 
     /// Mouse travel to the right turns right, and up looks up.
@@ -192,11 +215,38 @@ mod tests {
     }
 
     #[test]
+    fn a_tap_between_ticks_jumps_once() {
+        let mut c = Controls::default();
+        c.jump(true);
+        c.jump(false);
+        assert!(c.take_jump(), "the tap is sent");
+        assert!(!c.take_jump(), "and only once");
+    }
+
+    #[test]
+    fn holding_jump_keeps_asking_and_key_repeat_adds_nothing() {
+        let mut c = Controls::default();
+        c.jump(true);
+        assert!(c.take_jump());
+        c.jump(true);
+        assert!(c.take_jump(), "still held");
+        c.jump(false);
+        assert!(!c.take_jump(), "released");
+        c.jump(true);
+        c.release_keys();
+        assert!(!c.take_jump(), "focus lost drops the press");
+    }
+
+    #[test]
     fn a_script_overrides_the_keyboard_until_released() {
         let mut c = Controls::default();
         c.key(Dir::Forward, true);
         let mv = Vec2::new(0.0, -1.0);
-        c.script(Some(Script { mv, yaw: 1.0 }));
+        c.script(Some(Script {
+            mv,
+            yaw: 1.0,
+            jump: false,
+        }));
         assert_eq!(c.intent(), (mv, 1.0));
         c.script(None);
         assert_eq!(c.intent(), (Vec2::new(1.0, 0.0), 1.0), "keeps the yaw");

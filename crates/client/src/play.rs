@@ -13,7 +13,7 @@ use client::draw;
 use client::gait::Gaits;
 use client::input::{Controls, Ticker};
 use client::ui::{self, Camera, Hud, Screen};
-use game::{Event, LobbyConfig, Phase, Vec2};
+use game::{Event, LobbyConfig, Phase};
 use leptos::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -167,7 +167,7 @@ impl Play {
                 self.align = false;
             }
             let (mv, yaw) = self.controls.intent();
-            if let Some(f) = r.input(mv, yaw, false) {
+            if let Some(f) = r.input(mv, yaw, self.controls.take_jump()) {
                 self.session.send(&f);
             }
         }
@@ -198,18 +198,16 @@ impl Play {
         self.gaits.update(&avatars, now);
         let mode = self.camera.resolve(&view);
         let cam = match mode {
-            Camera::Follow => view
-                .me
-                .map(|me| engine::FollowCamera {
-                    look: self.controls.look(),
-                    ..draw::follow(me.body.pos, self.controls.intent().1)
-                }),
+            Camera::Follow => view.me.map(|me| engine::FollowCamera {
+                look: self.controls.look(),
+                ..draw::follow(me.body, self.controls.intent().1)
+            }),
             Camera::Spectate(id) => avatars
                 .iter()
                 .find(|a| a.id == id)
-                .map(|a| draw::orbit(a.body.pos, a.body.yaw + self.orbit_yaw)),
+                .map(|a| draw::orbit(a.body, a.body.yaw + self.orbit_yaw)),
         };
-        let cam = cam.unwrap_or_else(|| draw::orbit(Vec2::ZERO, self.orbit_yaw));
+        let cam = cam.unwrap_or_else(|| draw::orbit(game::Body::default(), self.orbit_yaw));
         let zoom = draw::Zoom::next(self.zoom, draw::free_distance(world, &cam), now);
         self.zoom = Some(zoom);
         let own = view.me.filter(|_| mode == Camera::Follow).map(|me| me.id);

@@ -44,6 +44,9 @@ pub struct Avatar {
     pub me: bool,
     pub x: f32,
     pub y: f32,
+    /// Feet height above the ground.
+    pub up: f32,
+    pub vy: f32,
     pub yaw: f32,
     pub role: String,
     pub status: String,
@@ -119,6 +122,8 @@ pub fn probe(view: Option<&ViewState<'_>>, camera: Camera, gpu: &str) -> Probe {
                 me: a.id == v.you,
                 x: a.body.pos.x,
                 y: a.body.pos.y,
+                up: a.body.y,
+                vy: a.body.vy,
                 yaw: a.body.yaw,
                 role: name(a.role),
                 status: name(a.status),

@@ -142,6 +142,9 @@ pub struct Pose {
     pub phase: f32,
     /// 0 stands at rest, 1 is a full running stride.
     pub stride: f32,
+    /// 0 on the ground, 1 in the air: knees tucked, arms up, and no foot
+    /// held to the ground.
+    pub air: f32,
 }
 
 /// From an avatar's feet to the top of its head.
@@ -181,6 +184,11 @@ const ELBOW_STRIDE: f32 = 0.45;
 /// Arms hang this far out from the body.
 const ARM_SPLAY: f32 = 0.08;
 const LEAN: f32 = 0.1;
+/// In the air the thighs swing up this far, the knees fold this far, and
+/// the arms reach forward and up this far.
+const TUCK_HIP: f32 = 1.0;
+const TUCK_KNEE: f32 = 1.7;
+const REACH: f32 = 2.5;
 
 /// Ground covered per half gait cycle at full stride: the distance a planted
 /// foot travels back from fully forward to fully behind.
@@ -202,20 +210,25 @@ pub fn avatar_instances(
     pose: Pose,
 ) -> [Instance; AVATAR_PARTS] {
     let s = pose.stride.clamp(0.0, 1.0);
+    let a = pose.air.clamp(0.0, 1.0);
+    let mix = |ground: f32, air: f32| ground + (air - ground) * a;
     let limb = color.map(|c| c * LIMB_SHADE);
     // Joints in the figure's frame, +x to its left, y up, +z forward, before the
     // body drops to keep a foot planted.
     let leg = |side: f32, phase: f32| {
-        let hip_angle = s * HIP_SWING * phase.sin();
-        let knee = s * (KNEE_BASE + KNEE_SWING * phase.cos().max(0.0));
+        let hip_angle = mix(s * HIP_SWING * phase.sin(), TUCK_HIP);
+        let knee = mix(
+            s * (KNEE_BASE + KNEE_SWING * phase.cos().max(0.0)),
+            TUCK_KNEE,
+        );
         let hip = Vec3::new(side * HIP.x, HIP.y, 0.0);
         let knee_at = hip + swing(hip_angle, 0.0) * THIGH;
         let ankle = knee_at + swing(hip_angle - knee, 0.0) * SHIN;
         (hip, knee_at, ankle)
     };
     let arm = |side: f32, phase: f32| {
-        let angle = -s * ARM_SWING * phase.sin();
-        let elbow = ELBOW_REST + s * ELBOW_STRIDE;
+        let angle = mix(-s * ARM_SWING * phase.sin(), REACH);
+        let elbow = mix(ELBOW_REST + s * ELBOW_STRIDE, ELBOW_REST);
         let shoulder = Vec3::new(side * SHOULDER.x, SHOULDER.y, 0.0);
         let elbow_at = shoulder + swing(angle, side * ARM_SPLAY) * UPPER_ARM;
         let hand = elbow_at + swing(angle + elbow, side * ARM_SPLAY) * FOREARM;
@@ -226,7 +239,7 @@ pub fn avatar_instances(
     let (l_shoulder, l_elbow, l_hand) = arm(1.0, pose.phase);
     let (r_shoulder, r_elbow, r_hand) = arm(-1.0, pose.phase + PI);
 
-    let drop = l_ankle.y.min(r_ankle.y) - ANKLE_Y;
+    let drop = (l_ankle.y.min(r_ankle.y) - ANKLE_Y) * (1.0 - a);
     let place = Mat4::from_translation(feet - Vec3::Y * drop) * Mat4::from_rotation_y(yaw);
     let pelvis = Vec3::Y * HIP.y;
     let lean = Mat4::from_translation(pelvis)
@@ -350,7 +363,11 @@ mod tests {
     }
 
     fn walking(phase: f32) -> Pose {
-        Pose { phase, stride: 1.0 }
+        Pose {
+            phase,
+            stride: 1.0,
+            ..Pose::default()
+        }
     }
 
     const TORSO: usize = 0;
@@ -375,6 +392,25 @@ mod tests {
     /// A dense sweep of the gait cycle, quarter turns included.
     fn phases() -> impl Iterator<Item = f32> {
         (0..48).map(|i| i as f32 * std::f32::consts::TAU / 48.0)
+    }
+
+    #[test]
+    fn in_the_air_the_knees_come_up_the_hands_go_up_and_the_feet_leave_the_ground() {
+        let stand = avatar_instances(Vec3::ZERO, 0.0, [1.0; 3], Pose::default());
+        let air = Pose {
+            air: 1.0,
+            ..Pose::default()
+        };
+        let jump = avatar_instances(Vec3::ZERO, 0.0, [1.0; 3], air);
+        // Parts: 3..7 arms (upper, fore), 7..11 legs (thigh, shin), 11..13 shoes.
+        let knee_y = |parts: &[Instance]| centre(&parts[8]).y;
+        let hand_y = |parts: &[Instance]| centre(&parts[4]).y;
+        assert!(knee_y(&jump) > knee_y(&stand) + 0.08, "knees tuck");
+        assert!(hand_y(&jump) > hand_y(&stand) + 0.2, "arms reach up");
+        assert!(
+            lowest(&jump) > lowest(&stand) + 0.05,
+            "feet leave the ground"
+        );
     }
 
     #[test]
@@ -413,7 +449,16 @@ mod tests {
     fn mid_stride_the_lower_foot_stays_planted_on_the_ground() {
         for phase in phases() {
             for stride in [0.3, 1.0] {
-                let parts = avatar_instances(Vec3::ZERO, 0.7, [1.0; 3], Pose { phase, stride });
+                let parts = avatar_instances(
+                    Vec3::ZERO,
+                    0.7,
+                    [1.0; 3],
+                    Pose {
+                        phase,
+                        stride,
+                        ..Pose::default()
+                    },
+                );
                 let low = lowest(&parts);
                 assert!(
                     low.abs() < 1e-3,
@@ -476,6 +521,7 @@ mod tests {
             Pose {
                 phase: 1.3,
                 stride: 0.0,
+                ..Pose::default()
             },
         );
         assert_eq!(
