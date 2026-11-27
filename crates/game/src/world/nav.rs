@@ -5,6 +5,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
 use crate::geom::Vec2;
+use crate::physics::blocks;
 use crate::rng::Rng;
 use crate::world::World;
 
@@ -38,7 +39,7 @@ impl NavGrid {
         let mut walk: Vec<bool> = (0..n * n)
             .map(|i| inner.contains(center_of(min, n, i)))
             .collect();
-        for s in &world.solids {
+        for s in world.solids.iter().filter(|s| blocks(s, 0.0)) {
             let b = s.shape.bounds().grow(CLEAR);
             let lo = |v: f32, o: f32| (((v - o) / CELL).floor().max(0.0) as usize).min(n);
             let (x0, x1) = (lo(b.min.x, min.x), lo(b.max.x, min.x) + 1);

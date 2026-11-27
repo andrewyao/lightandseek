@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::{AvatarState, Input, LobbyConfig, Member, Phase, PlayerId, Refusal, Role, Tick};
 use crate::world::World;
 
-pub(crate) const VERSION: u8 = 1;
+pub(crate) const VERSION: u8 = 2;
 
 /// One WebSocket binary message. Opaque to shells.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,6 +132,7 @@ mod tests {
             tick: Tick(9),
             mv,
             yaw,
+            jump: true,
         })
     }
 
@@ -164,6 +165,41 @@ mod tests {
             );
         }
 
+        let Ok(ClientMsg::Input(back)) = decode::<ClientMsg>(&ok) else {
+            panic!("an input decodes");
+        };
+        assert!(back.jump, "the jump survives");
+
+        let snapshot = |y: f32, vy: f32| ServerMsg::Snapshot {
+            tick: Tick(1),
+            phase: crate::model::Phase::Lobby,
+            ack: Tick(0),
+            avatars: vec![AvatarState {
+                id: PlayerId(1),
+                body: crate::model::Body {
+                    y,
+                    vy,
+                    ..Default::default()
+                },
+                role: Role::Hider,
+                status: crate::model::Status::Active,
+            }],
+        };
+        assert!(decode::<ServerMsg>(&encode(&snapshot(2.0, -3.0))).is_ok());
+        for (y, vy) in [(f32::NAN, 0.0), (0.0, f32::INFINITY)] {
+            assert_eq!(
+                decode::<ServerMsg>(&encode(&snapshot(y, vy))).err(),
+                Some(WireError::Malformed),
+                "y {y} vy {vy}"
+            );
+        }
+
+        let mut world = World::generate(SceneKind::Park, 1);
+        world.solids[2].base = f32::NAN;
+        assert_eq!(
+            decode::<ServerMsg>(&encode(&round_start(world))).err(),
+            Some(WireError::Malformed)
+        );
         let mut world = World::generate(SceneKind::Park, 1);
         world.solids[3].height = f32::NAN;
         assert_eq!(

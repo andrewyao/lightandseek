@@ -132,11 +132,18 @@ impl Inputs {
         self.queue.push_back(input);
     }
 
+    /// A repeat of `last` never jumps: one press is one jump.
     fn next(&mut self) -> Input {
-        if let Some(i) = self.queue.pop_front() {
-            self.last = i;
+        match self.queue.pop_front() {
+            Some(i) => {
+                self.last = i;
+                i
+            }
+            None => Input {
+                jump: false,
+                ..self.last
+            },
         }
-        self.last
     }
 
     /// A fresh client numbers its inputs from 1 again.
@@ -484,7 +491,10 @@ impl Room {
             };
             let state = AvatarState {
                 id,
-                body: Body { pos, yaw: 0.0 },
+                body: Body {
+                    pos,
+                    ..Body::default()
+                },
                 role,
                 status: Status::Active,
             };
@@ -577,7 +587,7 @@ impl Room {
                 let s = &mut a.state;
                 if s.role == Role::Hider
                     && s.status == Status::Active
-                    && can_catch(seeker.body, s.body.pos, &r.world)
+                    && can_catch(seeker.body, s.body, &r.world)
                 {
                     s.status = Status::Caught;
                     let msg = ServerMsg::Caught {
@@ -677,9 +687,10 @@ impl Round {
                 }
             };
             let s = &mut a.state;
-            if let Some(speed) = mobility(self.clock.phase(), s.role, s.status) {
-                s.body = physics::step(s.body, &input, speed, &self.world);
-            }
+            s.body = match mobility(self.clock.phase(), s.role, s.status) {
+                Some(speed) => physics::step(s.body, &input, speed, &self.world),
+                None => physics::fall(s.body, &self.world),
+            };
         }
     }
 }

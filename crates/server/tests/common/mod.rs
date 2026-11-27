@@ -91,7 +91,7 @@ impl Client {
 
     /// Queues one tick of input. A no-op until this client has an avatar.
     pub fn input(&mut self, mv: Vec2, yaw: f32) {
-        if let Some(f) = self.rep.input(mv, yaw) {
+        if let Some(f) = self.rep.input(mv, yaw, false) {
             self.outbox.push(f);
         }
     }

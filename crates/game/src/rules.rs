@@ -1,6 +1,6 @@
 //! The game's numbers, and who may move and catch.
 
-use crate::geom::{Vec2, facing};
+use crate::geom::{Vec3, facing};
 use crate::model::{Body, Phase, Role, Status};
 use crate::world::World;
 
@@ -15,7 +15,10 @@ pub const SEEKER_SPEED: f32 = HIDER_SPEED * 1.1;
 pub const CATCH_DIST: f32 = 2.0;
 /// The hider must be within this many radians of the seeker's yaw.
 pub const CATCH_HALF_ANGLE: f32 = std::f32::consts::PI / 6.0;
-/// Sight lines run at chest height. Solids lower than this do not block.
+/// Vertical distance between feet, strictly less than, for a catch.
+pub const CATCH_HEIGHT: f32 = 1.0;
+/// Sight lines run at chest height above the feet. Solids lower than this
+/// do not block someone standing on the ground.
 pub const EYE_Y: f32 = 0.6;
 
 /// A disconnected human keeps their avatar this long.
@@ -46,11 +49,22 @@ pub fn mobility(phase: Phase, role: Role, status: Status) -> Option<f32> {
     }
 }
 
-/// Close enough, facing the hider, and nothing at chest height between.
-pub fn can_catch(seeker: Body, hider: Vec2, world: &World) -> bool {
-    let to = hider - seeker.pos;
+/// Where `body` sees from: chest height above its feet.
+pub fn eye(body: Body) -> Vec3 {
+    Vec3::new(body.pos.x, body.y + EYE_Y, body.pos.y)
+}
+
+/// Nothing solid between the two avatars' eyes.
+pub fn in_sight(a: Body, b: Body, world: &World) -> bool {
+    world.ray_hit(eye(a), eye(b)).is_none()
+}
+
+/// Close enough across and up, facing the hider, and in sight.
+pub fn can_catch(seeker: Body, hider: Body, world: &World) -> bool {
+    let to = hider.pos - seeker.pos;
     let dist = to.length();
     dist < CATCH_DIST
+        && (hider.y - seeker.y).abs() < CATCH_HEIGHT
         && (dist == 0.0 || facing(seeker.yaw).dot(to) >= dist * CATCH_HALF_ANGLE.cos())
-        && world.ray_clear(seeker.pos, hider, EYE_Y)
+        && in_sight(seeker, hider, world)
 }

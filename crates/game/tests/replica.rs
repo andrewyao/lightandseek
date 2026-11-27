@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 
 use game::{
-    ConnId, Event, LobbyConfig, Phase, PlayerId, Replica, Role, Room, SceneKind, Step, To, Vec2,
+    Body, ConnId, Event, LobbyConfig, Phase, PlayerId, Replica, Role, Room, SceneKind, Step, To,
+    Vec2,
 };
 
 const ME: ConnId = ConnId(1);
@@ -77,14 +78,14 @@ impl Link {
         self.client.as_mut().expect("welcomed")
     }
 
-    fn me_on_server(&self, me: PlayerId) -> Vec2 {
+    fn me_on_server(&self, me: PlayerId) -> Body {
         let avatars = self.room.avatars();
-        avatars.iter().find(|a| a.id == me).unwrap().body.pos
+        avatars.iter().find(|a| a.id == me).unwrap().body
     }
 
-    fn predicted(&self) -> Vec2 {
+    fn predicted(&self) -> Body {
         let c = self.client.as_ref().unwrap();
-        c.view(f64::from(self.now) * TICK_MS).me.unwrap().body.pos
+        c.view(f64::from(self.now) * TICK_MS).me.unwrap().body
     }
 }
 
@@ -127,29 +128,36 @@ fn seeking(latency: u32) -> (Link, PlayerId) {
 }
 
 /// The input for client tick `k`: forward with a slowly sweeping yaw, so
-/// the path turns and slides along furniture.
-fn steer(k: u32) -> (Vec2, f32) {
-    (Vec2::new(1.0, 0.3), k as f32 * 0.07)
+/// the path turns and slides along furniture, jumping now and then.
+fn steer(k: u32) -> (Vec2, f32, bool) {
+    (Vec2::new(1.0, 0.3), k as f32 * 0.07, k % 25 < 2)
 }
 
 #[test]
 fn prediction_matches_the_server_exactly_under_100_ms_latency() {
     let latency = 2;
     let (mut link, me) = seeking(latency);
-    let mut predicted_after: Vec<(u32, Vec2)> = Vec::new();
-    let mut server_at: Vec<(u32, Vec2)> = Vec::new();
+    let mut predicted_after: Vec<(u32, Body)> = Vec::new();
+    let mut server_at: Vec<(u32, Body)> = Vec::new();
     for k in 0..120 {
-        let (mv, yaw) = steer(k);
-        let frame = link.client().input(mv, yaw).expect("an avatar to drive");
+        let (mv, yaw, jump) = steer(k);
+        let frame = link
+            .client()
+            .input(mv, yaw, jump)
+            .expect("an avatar to drive");
         link.send(frame.as_bytes().to_vec());
         predicted_after.push((link.now, link.predicted()));
         link.tick();
         server_at.push((link.now, link.me_on_server(me)));
     }
-    let start = predicted_after[0].1;
+    let start = predicted_after[0].1.pos;
     assert!(
-        start.distance(predicted_after[119].1) > 5.0,
+        start.distance(predicted_after[119].1.pos) > 5.0,
         "the avatar travelled"
+    );
+    assert!(
+        predicted_after.iter().any(|(_, b)| b.y > 0.5),
+        "the avatar jumped"
     );
 
     // Input sent at client tick t reaches the room `latency` ticks later and
@@ -169,7 +177,7 @@ fn prediction_matches_the_server_exactly_under_100_ms_latency() {
     );
 
     for _ in 0..latency * 2 + 1 {
-        let frame = link.client().input(Vec2::ZERO, 0.0).unwrap();
+        let frame = link.client().input(Vec2::ZERO, 0.0, false).unwrap();
         link.send(frame.as_bytes().to_vec());
         link.tick();
     }
@@ -181,19 +189,19 @@ fn prediction_reconverges_after_a_lost_input() {
     let latency = 2;
     let (mut link, me) = seeking(latency);
     for k in 0..60 {
-        let (mv, yaw) = steer(k);
-        let frame = link.client().input(mv, yaw).unwrap();
+        let (mv, yaw, jump) = steer(k);
+        let frame = link.client().input(mv, yaw, jump).unwrap();
         if k != 20 {
             link.send(frame.as_bytes().to_vec());
         }
         link.tick();
     }
     for _ in 0..10 {
-        let frame = link.client().input(Vec2::ZERO, 0.0).unwrap();
+        let frame = link.client().input(Vec2::ZERO, 0.0, false).unwrap();
         link.send(frame.as_bytes().to_vec());
         link.tick();
     }
-    let gap = link.predicted().distance(link.me_on_server(me));
+    let gap = link.predicted().pos.distance(link.me_on_server(me).pos);
     assert!(gap < 1e-4, "prediction is {gap} from the server after acks");
 }
 

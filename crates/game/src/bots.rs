@@ -2,9 +2,10 @@
 //! which goes through the same `physics::step` as a human's.
 
 use crate::geom::{Vec2, facing, yaw_toward};
+use crate::model::Body;
 use crate::model::{AvatarState, Input, Phase, PlayerId, Role, Status, Tick};
 use crate::rng::Rng;
-use crate::rules::{DT, EYE_Y, speed};
+use crate::rules::{CATCH_DIST, DT, in_sight, speed};
 use crate::world::World;
 use crate::world::nav::NavGrid;
 
@@ -18,6 +19,8 @@ const REGION: f32 = 5.0;
 const WAYPOINT_REACHED: f32 = 0.3;
 /// Ticks of no progress before a bot gives up on its path.
 const STUCK_TICKS: u32 = 10;
+/// A seeker jumps for a hider this far above its feet, within reach.
+const JUMP_FOR: f32 = 0.3;
 
 /// What a brain may see of the room this tick.
 pub(crate) struct Senses<'a> {
@@ -30,12 +33,12 @@ pub(crate) struct Senses<'a> {
 }
 
 impl Senses<'_> {
-    fn sees(&self, target: Vec2, dist: f32, half_angle: Option<f32>) -> bool {
-        let to = target - self.me.body.pos;
+    fn sees(&self, target: Body, dist: f32, half_angle: Option<f32>) -> bool {
+        let to = target.pos - self.me.body.pos;
         let d = to.length();
         d < dist
             && half_angle.is_none_or(|h| facing(self.me.body.yaw).dot(to) >= d * h.cos())
-            && self.world.ray_clear(self.me.body.pos, target, EYE_Y)
+            && in_sight(self.me.body, target, self.world)
     }
 }
 
@@ -113,7 +116,7 @@ impl Brain {
                     .filter(|a| a.role == Role::Hider && a.status == Status::Active)
                     .filter(|a| {
                         let fov = (*chasing != Some(a.id)).then_some(FOV_HALF);
-                        s.sees(a.body.pos, VIEW_DIST, fov)
+                        s.sees(a.body, VIEW_DIST, fov)
                     })
                     .min_by(|a, b| {
                         let (da, db) = (
@@ -125,7 +128,12 @@ impl Brain {
                 if let Some(t) = target {
                     *chasing = Some(t.id);
                     self.path.clear();
-                    return toward(me.body.pos, t.body.pos);
+                    let above = t.body.y - me.body.y;
+                    let near = t.body.pos.distance(me.body.pos) < CATCH_DIST;
+                    return Input {
+                        jump: near && above > JUMP_FOR,
+                        ..toward(me.body.pos, t.body.pos)
+                    };
                 }
                 if chasing.take().is_some() {
                     self.path.clear();
@@ -138,7 +146,7 @@ impl Brain {
                 let seeker = s.avatars.iter().find(|a| a.role == Role::Seeker);
                 let threat = seeker
                     .filter(|_| matches!(s.phase, Phase::Seeking { .. }))
-                    .filter(|k| s.sees(k.body.pos, FLEE_DIST, None));
+                    .filter(|k| s.sees(k.body, FLEE_DIST, None));
                 match (*hide, threat) {
                     (Hide::Fleeing { until }, _) if s.now < until && !self.path.is_empty() => {}
                     (_, Some(k)) => {
@@ -180,6 +188,7 @@ fn still(yaw: f32) -> Input {
         tick: Tick(0),
         mv: Vec2::ZERO,
         yaw,
+        jump: false,
     }
 }
 
@@ -188,6 +197,7 @@ fn toward(from: Vec2, to: Vec2) -> Input {
         tick: Tick(0),
         mv: Vec2::new(1.0, 0.0),
         yaw: yaw_toward(to - from),
+        jump: false,
     }
 }
 
@@ -258,14 +268,17 @@ fn flee(s: &Senses, seeker: Vec2, rng: &mut Rng) -> Option<Vec<Vec2>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Body, SceneKind};
+    use crate::model::SceneKind;
     use crate::physics;
     use crate::rules::{SEEKER_SPEED, can_catch};
 
     fn avatar(id: u32, role: Role, pos: Vec2) -> AvatarState {
         AvatarState {
             id: PlayerId(id),
-            body: Body { pos, yaw: 0.0 },
+            body: Body {
+                pos,
+                ..Body::default()
+            },
             role,
             status: Status::Active,
         }
@@ -299,7 +312,7 @@ mod tests {
                 };
                 let input = brain.think(&senses, &mut rng).clamped();
                 seeker.body = physics::step(seeker.body, &input, SEEKER_SPEED, &world);
-                can_catch(seeker.body, hider.body.pos, &world)
+                can_catch(seeker.body, hider.body, &world)
             });
             assert!(
                 caught_at.is_some(),

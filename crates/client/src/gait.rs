@@ -127,7 +127,7 @@ mod tests {
             id: PlayerId(id),
             body: Body {
                 pos: Vec2::new(x, 0.0),
-                yaw: 0.0,
+                ..Body::default()
             },
             role: Role::Hider,
             status: Status::Active,

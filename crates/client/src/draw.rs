@@ -246,7 +246,11 @@ mod tests {
     fn avatar(id: u32, role: Role, status: Status, pos: Vec2) -> AvatarView {
         AvatarView {
             id: PlayerId(id),
-            body: Body { pos, yaw: 0.5 },
+            body: Body {
+                pos,
+                yaw: 0.5,
+                ..Body::default()
+            },
             role,
             status,
             control: Control::Human,
@@ -335,6 +339,7 @@ mod tests {
                 Vec2::new(5.0, 0.2),
             )),
             height: 3.0,
+            base: 0.0,
         });
         let walled = clipped(&world, follow(Vec2::ZERO, 0.0), 1.5);
         assert!(open.eye.z < -2.5, "behind the avatar: {}", open.eye);
@@ -368,6 +373,7 @@ mod tests {
                 Vec2::new(6.0, 0.5),
             )),
             height: 12.0,
+            base: 0.0,
         });
         world
     }

@@ -11,6 +11,7 @@ fn ray_hit_reports_distance_to_the_first_solid_respecting_heights() {
             radius: 1.0,
         },
         height: 3.0,
+        base: 0.0,
     });
     let at = Vec3::new;
     let hit = world
@@ -48,6 +49,20 @@ fn ray_hit_reports_distance_to_the_first_solid_respecting_heights() {
     );
 }
 
+#[test]
+fn ray_hit_passes_under_a_floating_platform() {
+    let mut world = World::open(SceneKind::Kitchen);
+    world.solids.push(Solid {
+        shape: Footprint::Aabb(Aabb2::centered(Vec2::new(0.0, 3.0), Vec2::new(2.0, 1.0))),
+        height: 4.0,
+        base: 2.0,
+    });
+    let at = Vec3::new;
+    assert_eq!(world.ray_hit(at(0.0, 1.0, 0.0), at(0.0, 1.0, 6.0)), None);
+    let hit = world.ray_hit(at(0.0, 3.0, 0.0), at(0.0, 3.0, 6.0));
+    assert!(hit.is_some_and(|d| (d - 2.0).abs() < 1e-5), "{hit:?}");
+}
+
 fn wall(height: f32) -> World {
     let mut world = World::open(SceneKind::City);
     world.solids.push(Solid {
@@ -56,36 +71,59 @@ fn wall(height: f32) -> World {
             max: Vec2::new(1.0, 0.9),
         }),
         height,
+        base: 0.0,
     });
     world
 }
 
-/// The seeker at the origin facing +y, the hider `dist` away at `deg` off it.
-fn case(dist: f32, deg: f32, world: &World) -> bool {
-    let seeker = Body {
-        pos: Vec2::ZERO,
-        yaw: 0.0,
-    };
-    let hider = facing(deg.to_radians()) * dist;
-    can_catch(seeker, hider, world)
+fn at(pos: Vec2, y: f32) -> Body {
+    Body {
+        pos,
+        y,
+        ..Body::default()
+    }
+}
+
+/// The seeker at the origin facing +y, the hider `dist` away at `deg` off
+/// it and `up` above.
+fn case(dist: f32, deg: f32, up: f32, world: &World) -> bool {
+    let hider = at(facing(deg.to_radians()) * dist, up);
+    can_catch(Body::default(), hider, world)
 }
 
 #[test]
 fn catch_table() {
     let open = World::open(SceneKind::Park);
     let cases = [
-        ("1.9 u facing", 1.9, 0.0, &open, true),
-        ("2.1 u facing", 2.1, 0.0, &open, false),
-        ("exactly 2.0 u", 2.0, 0.0, &open, false),
-        ("1.5 u at 29 degrees", 1.5, 29.0, &open, true),
-        ("1.5 u at -29 degrees", 1.5, -29.0, &open, true),
-        ("1.5 u at 45 degrees", 1.5, 45.0, &open, false),
-        ("1.5 u behind", 1.5, 180.0, &open, false),
-        ("1.5 u behind a wall", 1.5, 0.0, &wall(2.0), false),
-        ("1.5 u over a knee-high bench", 1.5, 0.0, &wall(0.45), true),
+        ("1.9 u facing", 1.9, 0.0, 0.0, &open, true),
+        ("2.1 u facing", 2.1, 0.0, 0.0, &open, false),
+        ("exactly 2.0 u", 2.0, 0.0, 0.0, &open, false),
+        ("1.5 u at 29 degrees", 1.5, 29.0, 0.0, &open, true),
+        ("1.5 u at -29 degrees", 1.5, -29.0, 0.0, &open, true),
+        ("1.5 u at 45 degrees", 1.5, 45.0, 0.0, &open, false),
+        ("1.5 u behind", 1.5, 180.0, 0.0, &open, false),
+        ("1.5 u behind a wall", 1.5, 0.0, 0.0, &wall(2.0), false),
+        (
+            "1.5 u over a knee-high bench",
+            1.5,
+            0.0,
+            0.0,
+            &wall(0.45),
+            true,
+        ),
+        ("1.5 u and mid-jump above", 1.5, 0.0, 0.9, &open, true),
+        ("1.5 u and 3 u above", 1.5, 0.0, 3.0, &open, false),
+        (
+            "1.5 u beyond a wall and 2 u up",
+            1.5,
+            0.0,
+            2.0,
+            &wall(2.0),
+            false,
+        ),
     ];
-    for (name, dist, deg, world, want) in cases {
-        assert_eq!(case(dist, deg, world), want, "{name}");
+    for (name, dist, deg, up, world, want) in cases {
+        assert_eq!(case(dist, deg, up, world), want, "{name}");
     }
 }
 
@@ -111,9 +149,9 @@ fn facing_survives_unwrapped_yaw() {
     for turns in [-3.0, -1.0, 0.0, 2.0, 50.0] {
         let yaw = toward + turns * std::f32::consts::TAU;
         let seeker = Body {
-            pos: Vec2::ZERO,
             yaw,
+            ..Body::default()
         };
-        assert!(can_catch(seeker, hider, &open), "{turns} turns");
+        assert!(can_catch(seeker, at(hider, 0.0), &open), "{turns} turns");
     }
 }

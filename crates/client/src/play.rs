@@ -167,7 +167,7 @@ impl Play {
                 self.align = false;
             }
             let (mv, yaw) = self.controls.intent();
-            if let Some(f) = r.input(mv, yaw) {
+            if let Some(f) = r.input(mv, yaw, false) {
                 self.session.send(&f);
             }
         }

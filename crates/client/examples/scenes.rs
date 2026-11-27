@@ -60,6 +60,7 @@ fn place(world: &World) -> Vec<AvatarView> {
         body: Body {
             pos: world.spawns[i],
             yaw,
+            ..Body::default()
         },
         role,
         status,

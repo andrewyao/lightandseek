@@ -38,8 +38,13 @@ const CLOCK_SNAP_MS: f64 = 250.0;
 pub enum Event {
     Roster,
     RoundStart,
-    Caught { hider: PlayerId, by: PlayerId },
-    RoundEnd { winner: Role },
+    Caught {
+        hider: PlayerId,
+        by: PlayerId,
+    },
+    RoundEnd {
+        winner: Role,
+    },
     Refused(Refusal),
     /// A newer socket resumed this player; this one is about to close.
     Replaced,
@@ -217,20 +222,22 @@ impl Replica {
     /// One client tick of intent: `mv.x` forward, `mv.y` strafe-right, both
     /// clamped to unit length. Moves the prediction and returns the frame to
     /// send, or `None` when you have no avatar.
-    pub fn input(&mut self, mv: Vec2, yaw: f32) -> Option<Frame> {
+    pub fn input(&mut self, mv: Vec2, yaw: f32, jump: bool) -> Option<Frame> {
         let me = self.predicted?;
         let world = &self.round.as_ref()?.world;
         let input = Input {
             tick: Tick(self.next_input),
             mv,
             yaw,
+            jump,
         }
         .clamped();
         self.next_input += 1;
-        if let Some(speed) = mobility(self.phase, me.role, me.status) {
-            let body = physics::step(me.body, &input, speed, world);
-            self.predicted = Some(AvatarState { body, ..me });
-        }
+        let body = match mobility(self.phase, me.role, me.status) {
+            Some(speed) => physics::step(me.body, &input, speed, world),
+            None => physics::fall(me.body, world),
+        };
+        self.predicted = Some(AvatarState { body, ..me });
         if self.pending.len() == MAX_PENDING {
             self.pending.pop_front();
         }
@@ -250,10 +257,12 @@ impl Replica {
             return;
         };
         let mut body = server.body;
-        if let Some(speed) = mobility(self.phase, server.role, server.status) {
-            for input in &self.pending {
-                body = physics::step(body, input, speed, &round.world);
-            }
+        let speed = mobility(self.phase, server.role, server.status);
+        for input in &self.pending {
+            body = match speed {
+                Some(speed) => physics::step(body, input, speed, &round.world),
+                None => physics::fall(body, &round.world),
+            };
         }
         self.predicted = Some(AvatarState { body, ..server });
     }
@@ -359,5 +368,7 @@ fn lerp(a: Body, b: Body, t: f32) -> Body {
     Body {
         pos: a.pos.lerp(b.pos, t),
         yaw: a.yaw + turn * t,
+        y: a.y + (b.y - a.y) * t,
+        vy: b.vy,
     }
 }

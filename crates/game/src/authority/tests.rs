@@ -339,6 +339,7 @@ fn a_seeker_who_resumes_within_grace_keeps_the_round_going() {
             tick: Tick(1),
             mv: Vec2::new(1.0, 0.0),
             yaw: 0.0,
+            jump: false,
         }),
     );
     net.tick();
@@ -437,6 +438,7 @@ fn walk(per_tick: u32) -> Vec<Vec2> {
                 tick: Tick(next),
                 mv: Vec2::new(1.0, 0.0),
                 yaw,
+                jump: false,
             };
             net.send(1, &ClientMsg::Input(input));
             next += 1;
@@ -454,6 +456,38 @@ fn three_inputs_per_tick_move_no_farther_than_one() {
     let three = walk(3);
     assert_eq!(one, three, "same path tick for tick");
     assert!(one[0].distance(one[39]) > 2.0, "the avatar did move");
+}
+
+#[test]
+fn one_jump_input_jumps_once_though_the_room_repeats_it() {
+    let mut net = Net::new(3);
+    let me = net.join(1, None);
+    net.configure(
+        1,
+        LobbyConfig {
+            hide_secs: 1,
+            ..config(1, 1)
+        },
+    );
+    net.send(1, &ClientMsg::Start);
+    net.tick_until(100, |p| matches!(p, Phase::Seeking { .. }));
+    let input = Input {
+        tick: Tick(1),
+        jump: true,
+        ..Input::default()
+    };
+    net.send(1, &ClientMsg::Input(input));
+    let mut takeoffs = 0;
+    let mut was_up = false;
+    for _ in 0..80 {
+        net.tick();
+        let avatars = net.room.avatars();
+        let up = avatars.iter().find(|a| a.id == me).unwrap().body.y > 0.0;
+        takeoffs += usize::from(up && !was_up);
+        was_up = up;
+    }
+    assert_eq!(takeoffs, 1);
+    assert!(!was_up, "landed again");
 }
 
 #[test]
@@ -475,6 +509,7 @@ fn oversized_moves_are_clamped_to_unit_speed() {
         tick: Tick(1),
         mv: Vec2::new(30.0, 40.0),
         yaw: 1.0,
+        jump: false,
     };
     net.send(1, &ClientMsg::Input(input));
     net.tick();

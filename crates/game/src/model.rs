@@ -50,12 +50,17 @@ pub enum Control {
 }
 
 /// Where an avatar stands and which way it faces. `yaw` is radians about +Y,
-/// see `geom::facing`.
+/// see `geom::facing`. `pos` is on the ground plane and `y` is the height of
+/// the feet above it; `vy` is vertical speed, 0 while standing.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     pub pos: Vec2,
     #[serde(deserialize_with = "finite")]
     pub yaw: f32,
+    #[serde(deserialize_with = "finite")]
+    pub y: f32,
+    #[serde(deserialize_with = "finite")]
+    pub vy: f32,
 }
 
 /// One client tick of intent. The client sends exactly one per 50 ms.
@@ -67,6 +72,8 @@ pub struct Input {
     pub mv: Vec2,
     #[serde(deserialize_with = "finite")]
     pub yaw: f32,
+    /// Jump if standing. Holding it hops again on landing.
+    pub jump: bool,
 }
 
 impl Input {

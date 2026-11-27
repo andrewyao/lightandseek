@@ -70,12 +70,26 @@ const fn paint(color: [u8; 3], material: Material) -> Paint {
     Paint { color, material }
 }
 
-/// Blocks movement always, and sight and the camera below `height`.
+/// Its footprint extruded from `base` to `height`. Blocks movement, sight,
+/// and the camera inside that span; its top can be stood on.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Solid {
     pub shape: Footprint,
     #[serde(deserialize_with = "finite")]
     pub height: f32,
+    #[serde(deserialize_with = "finite")]
+    pub base: f32,
+}
+
+impl Solid {
+    /// Standing on the ground, from y = 0 to `height`.
+    pub fn ground(shape: Footprint, height: f32) -> Solid {
+        Solid {
+            shape,
+            height,
+            base: 0.0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -108,7 +122,7 @@ impl World {
     }
 
     /// Distance from `from` along the segment to `to` where it first enters a
-    /// solid, each solid being its footprint extruded from y = 0 to its
+    /// solid, each solid being its footprint extruded from its base to its
     /// height. `Some(0.0)` when `from` starts inside one. Grazing a surface
     /// is not a hit. The follow camera pulls in to this.
     pub fn ray_hit(&self, from: Vec3, to: Vec3) -> Option<f32> {
@@ -119,7 +133,7 @@ impl World {
             .iter()
             .filter_map(|s| {
                 let span = s.shape.line_span(p, flat)?;
-                let span = clip(span, from.y, d.y, 0.0, s.height)?;
+                let span = clip(span, from.y, d.y, s.base, s.height)?;
                 let span = (span.0.max(0.0), span.1.min(1.0));
                 (span.0 < span.1).then_some(span.0)
             })
@@ -202,10 +216,7 @@ impl<'a> Builder<'a> {
     /// A box that blocks, drawn from the ground to `height`.
     fn block(&mut self, b: Aabb2, height: f32, paint: Paint) {
         let c = b.center();
-        self.solids.push(Solid {
-            shape: Footprint::Aabb(b),
-            height,
-        });
+        self.solids.push(Solid::ground(Footprint::Aabb(b), height));
         self.props.push(Prop {
             shape: Shape::Box,
             center: Vec3::new(c.x, height / 2.0, c.y),
@@ -217,10 +228,8 @@ impl<'a> Builder<'a> {
 
     /// A cylinder that blocks, drawn from the ground to `height`.
     fn pillar(&mut self, center: Vec2, radius: f32, height: f32, paint: Paint) {
-        self.solids.push(Solid {
-            shape: Footprint::Circle { center, radius },
-            height,
-        });
+        self.solids
+            .push(Solid::ground(Footprint::Circle { center, radius }, height));
         self.props.push(Prop {
             shape: Shape::Cylinder,
             center: Vec3::new(center.x, height / 2.0, center.y),
@@ -232,7 +241,7 @@ impl<'a> Builder<'a> {
 
     /// Blocks without a prop of its own. The caller draws it in parts.
     fn solid(&mut self, shape: Footprint, height: f32) {
-        self.solids.push(Solid { shape, height });
+        self.solids.push(Solid::ground(shape, height));
     }
 
     /// Drawn only. Canopies, roofs, shelves above head height.
@@ -320,7 +329,7 @@ impl<'a> Builder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physics::RADIUS;
+    use crate::physics::{RADIUS, blocks};
 
     #[test]
     fn every_kind_is_deterministic_connected_and_spawnable_across_200_seeds() {
@@ -345,7 +354,11 @@ mod tests {
                 for (i, s) in world.spawns.iter().enumerate() {
                     assert!(grid.in_largest(*s), "{kind:?} {seed} spawn {i} reachable");
                     assert!(
-                        world.solids.iter().all(|x| x.shape.distance(*s) > RADIUS),
+                        world
+                            .solids
+                            .iter()
+                            .filter(|x| blocks(x, 0.0))
+                            .all(|x| x.shape.distance(*s) > RADIUS),
                         "{kind:?} {seed} spawn {i} clear"
                     );
                 }

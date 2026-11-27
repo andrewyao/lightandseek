@@ -238,7 +238,7 @@ mod tests {
             id: PlayerId(id),
             body: Body {
                 pos: Vec2::new(id as f32, 0.0),
-                yaw: 0.0,
+                ..Body::default()
             },
             role,
             status,
