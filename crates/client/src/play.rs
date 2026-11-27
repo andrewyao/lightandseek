@@ -200,7 +200,10 @@ impl Play {
         let cam = match mode {
             Camera::Follow => view
                 .me
-                .map(|me| draw::follow(me.body.pos, self.controls.intent().1)),
+                .map(|me| engine::FollowCamera {
+                    look: self.controls.look(),
+                    ..draw::follow(me.body.pos, self.controls.intent().1)
+                }),
             Camera::Spectate(id) => avatars
                 .iter()
                 .find(|a| a.id == id)

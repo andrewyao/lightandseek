@@ -73,11 +73,11 @@ fn on_mouse(sv: Sv, e: &MouseEvent) {
     if !pointer_locked() && e.buttons() & 1 == 0 {
         return;
     }
-    let dx = f64::from(e.movement_x());
+    let (dx, dy) = (f64::from(e.movement_x()), f64::from(e.movement_y()));
     sv.with_value(|sh| {
         let mut p = sh.borrow_mut();
         match p.camera {
-            Camera::Follow if !p.controls.scripted() => p.controls.turn(dx),
+            Camera::Follow if !p.controls.scripted() => p.controls.turn(dx, dy),
             Camera::Follow => {}
             Camera::Spectate(_) => p.orbit_yaw -= dx as f32 * ORBIT_PER_PX,
         }

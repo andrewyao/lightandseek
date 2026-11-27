@@ -47,6 +47,7 @@ pub struct Script {
 pub struct Controls {
     held: [bool; 4],
     yaw: f32,
+    look: f32,
     script: Option<Script>,
 }
 
@@ -60,9 +61,16 @@ impl Controls {
         self.held = [false; 4];
     }
 
-    /// Mouse travel to the right turns right.
-    pub fn turn(&mut self, dx_px: f64) {
+    /// Mouse travel to the right turns right, and up looks up.
+    pub fn turn(&mut self, dx_px: f64, dy_px: f64) {
         self.set_yaw(self.yaw - dx_px as f32 * TURN_PER_PX);
+        self.look = (self.look - dy_px as f32 * TURN_PER_PX)
+            .clamp(engine::camera::LOOK_DOWN, engine::camera::LOOK_UP);
+    }
+
+    /// How far up (positive) or down the player looks, for the follow camera.
+    pub fn look(&self) -> f32 {
+        self.look
     }
 
     pub fn set_yaw(&mut self, yaw: f32) {
@@ -162,7 +170,7 @@ mod tests {
             let mut c = Controls::default();
             c.set_yaw(start);
             let before = c.intent().1;
-            c.turn(40.0);
+            c.turn(40.0, 0.0);
             let after = c.intent().1;
             assert!(
                 facing(after).dot(right(before)) > 0.1,
@@ -170,6 +178,17 @@ mod tests {
             );
             assert!((-PI..=PI).contains(&after));
         }
+    }
+
+    #[test]
+    fn mouse_up_looks_up_within_the_camera_limits() {
+        let mut c = Controls::default();
+        c.turn(0.0, -50.0);
+        assert!(c.look() > 0.1);
+        c.turn(0.0, -1e6);
+        assert_eq!(c.look(), engine::camera::LOOK_UP);
+        c.turn(0.0, 1e6);
+        assert_eq!(c.look(), engine::camera::LOOK_DOWN);
     }
 
     #[test]

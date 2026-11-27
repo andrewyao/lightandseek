@@ -13,6 +13,9 @@ pub const PIVOT_HEIGHT: f32 = 1.1;
 /// The follow camera stops this short of whatever `clip` hits.
 const CLIP_MARGIN: f32 = 0.25;
 const PITCH_LIMIT: f32 = 1.45;
+/// The range of `FollowCamera::look`.
+pub const LOOK_DOWN: f32 = -0.8;
+pub const LOOK_UP: f32 = 1.1;
 /// The pitch a follow camera swings up to as a wall pulls it in. Steeper
 /// clears more low cover, but stares at the floor.
 const SWING_PITCH: f32 = 0.75;
@@ -82,6 +85,10 @@ pub struct FollowCamera {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
+    /// The player's look, in `LOOK_DOWN..=LOOK_UP` radians. Looking down
+    /// raises the eye over the target; looking up only tilts the view, so
+    /// the eye never drops through the floor.
+    pub look: f32,
 }
 
 impl FollowCamera {
@@ -91,6 +98,7 @@ impl FollowCamera {
             yaw,
             pitch: 0.35,
             distance: 4.5,
+            look: 0.0,
         }
     }
 
@@ -107,7 +115,9 @@ impl FollowCamera {
     /// straight in at head height.
     pub fn view_at(&self, distance: f32, aspect: f32) -> View {
         let dir = self.dir_at(distance);
-        View::look_to(self.pivot() - dir * distance, dir, aspect)
+        let up = self.look.clamp(0.0, LOOK_UP);
+        let aim = look_dir(self.yaw, (-dir.y).clamp(-1.0, 1.0).asin() - up);
+        View::look_to(self.pivot() - dir * distance, aim, aspect)
     }
 
     /// How far the eye can come out from the pivot, up to `distance`, with
@@ -151,7 +161,8 @@ impl FollowCamera {
     }
 
     fn dir_at(&self, distance: f32) -> Vec3 {
-        let base = self.pitch.clamp(-PITCH_LIMIT, PITCH_LIMIT);
+        let down = -self.look.clamp(LOOK_DOWN, 0.0);
+        let base = (self.pitch + down).clamp(-PITCH_LIMIT, PITCH_LIMIT);
         let t = if distance < CLOSE {
             distance / CLOSE
         } else {
@@ -277,6 +288,48 @@ mod tests {
         assert!((pitch(CLOSE) - SWING_PITCH).abs() < 1e-5);
         assert!(pitch(0.3) < pitch(CLOSE), "looks ahead again once close");
         assert!((pitch(1e-3) - cam.pitch).abs() < 1e-3);
+    }
+
+    #[test]
+    fn looking_up_from_the_floor_brings_a_tall_wall_into_frame() {
+        // Facing +Z with a wall 20 u ahead; a point 20 u up it.
+        let high = Vec3::new(0.0, 20.0, 20.0);
+        let in_frame = |look: f32| {
+            let cam = FollowCamera {
+                look,
+                ..FollowCamera::new(Vec3::ZERO, 0.0)
+            };
+            cam.view(1.5)
+                .project(high, [300, 200])
+                .is_some_and(|[x, y]| (0.0..=300.0).contains(&x) && (0.0..=200.0).contains(&y))
+        };
+        assert!(!in_frame(0.0), "level look cannot see it");
+        assert!(in_frame(LOOK_UP), "looking up can");
+    }
+
+    #[test]
+    fn no_look_takes_the_eye_below_the_floor() {
+        for i in 0..=40 {
+            let look = LOOK_DOWN + (LOOK_UP - LOOK_DOWN) * i as f32 / 40.0;
+            let cam = FollowCamera {
+                look,
+                ..FollowCamera::new(Vec3::ZERO, 0.4)
+            };
+            for d in [0.2, 1.0, CLOSE, 3.0, cam.distance] {
+                let eye = cam.view_at(d, 1.0).eye;
+                assert!(eye.y > 0.2, "look {look} at {d}: eye {eye}");
+            }
+        }
+    }
+
+    #[test]
+    fn looking_down_raises_the_eye() {
+        let level = FollowCamera::new(Vec3::ZERO, 0.0);
+        let down = FollowCamera {
+            look: LOOK_DOWN,
+            ..level
+        };
+        assert!(down.view(1.0).eye.y > level.view(1.0).eye.y + 1.0);
     }
 
     #[test]
