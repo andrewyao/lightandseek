@@ -84,6 +84,8 @@ pub(super) fn build(b: &mut Builder) {
     pantry(k, rect(xb + T, -h, h, yp - T));
     laundry(k, rect(xb + T, yp + T, h, yl - T));
     storeroom(k, rect(xb + T, yl + T, h, h));
+    let furniture = k.b.structure..k.b.solids.len();
+    k.b.pads_by(4, furniture);
 }
 
 /// The U of counters along the north, west, and east walls, the island, and

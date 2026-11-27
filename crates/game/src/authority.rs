@@ -66,7 +66,7 @@ struct Human {
 #[derive(Debug)]
 enum Stage {
     Lobby,
-    Round(Round),
+    Round(Box<Round>),
 }
 
 #[derive(Debug)]
@@ -502,13 +502,13 @@ impl Room {
         }
         let until = self.now.plus(secs(self.config.hide_secs.into()));
         let sent = world.clone();
-        self.stage = Stage::Round(Round {
+        self.stage = Stage::Round(Box::new(Round {
             world,
             nav,
             clock: Clock::Hiding { until },
             seeker,
             avatars,
-        });
+        }));
         let msg = ServerMsg::RoundStart {
             world: sent,
             seeker,

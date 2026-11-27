@@ -5,7 +5,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 
 use crate::geom::Vec2;
-use crate::physics::blocks;
+use crate::physics::{STEP_UP, blocks};
 use crate::rng::Rng;
 use crate::world::World;
 
@@ -50,6 +50,14 @@ impl NavGrid {
                     if walk[i] && s.shape.distance(center_of(min, n, i)) < CLEAR {
                         walk[i] = false;
                     }
+                }
+            }
+        }
+        // Bots keep off ground pads, and nobody spawns on one.
+        for d in world.pads.iter().filter(|d| d.y <= STEP_UP) {
+            for (i, w) in walk.iter_mut().enumerate() {
+                if *w && center_of(min, n, i).distance(d.center) < d.radius + CLEAR {
+                    *w = false;
                 }
             }
         }

@@ -45,6 +45,8 @@ pub enum Material {
     Fabric,
     Metal,
     Water,
+    /// Lit from within: unshaded, casts no shadow, barely fogged.
+    Glow,
 }
 
 impl Material {

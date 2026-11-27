@@ -72,9 +72,14 @@ impl Gait {
     }
 }
 
-/// Walk cycles of every active player, kept across frames.
+/// Walk cycles of every active player, kept across frames, and the time
+/// of the frame they were last posed for, which the rest of the scene
+/// animates to.
 #[derive(Clone, Debug, Default)]
-pub struct Gaits(BTreeMap<PlayerId, Gait>);
+pub struct Gaits {
+    walks: BTreeMap<PlayerId, Gait>,
+    at_ms: f64,
+}
 
 impl Gaits {
     /// Folds in this frame's `avatars`. Players no longer active are
@@ -85,18 +90,24 @@ impl Gaits {
             .filter(|a| a.status == Status::Active)
             .map(|a| a.id)
             .collect();
-        self.0.retain(|id, _| active.contains(id));
+        self.at_ms = now_ms;
+        self.walks.retain(|id, _| active.contains(id));
         for a in avatars.iter().filter(|a| a.status == Status::Active) {
-            self.0
+            self.walks
                 .entry(a.id)
                 .and_modify(|g| g.step(a.body.pos, a.body.vy != 0.0, now_ms))
                 .or_insert_with(|| Gait::at(a.body.pos, now_ms));
         }
     }
 
+    /// The frame time of the last `update`.
+    pub fn at_ms(&self) -> f64 {
+        self.at_ms
+    }
+
     /// How `id`'s figure stands this frame. Unknown players stand at rest.
     pub fn pose(&self, id: PlayerId) -> Pose {
-        self.0.get(&id).map_or_else(Pose::default, |g| Pose {
+        self.walks.get(&id).map_or_else(Pose::default, |g| Pose {
             phase: g.phase,
             stride: (g.speed / HIDER_SPEED).clamp(0.0, 1.0) * (1.0 - g.air),
             air: g.air,
@@ -108,22 +119,21 @@ impl Gaits {
 /// where it then stands.
 impl FromIterator<(PlayerId, Pose)> for Gaits {
     fn from_iter<I: IntoIterator<Item = (PlayerId, Pose)>>(poses: I) -> Gaits {
-        Gaits(
-            poses
-                .into_iter()
-                .map(|(id, pose)| {
-                    let speed = pose.stride.clamp(0.0, 1.0) * HIDER_SPEED;
-                    let gait = Gait {
-                        rough: speed,
-                        speed,
-                        phase: pose.phase.rem_euclid(TAU),
-                        air: pose.air.clamp(0.0, 1.0),
-                        ..Gait::at(Vec2::ZERO, f64::NEG_INFINITY)
-                    };
-                    (id, gait)
-                })
-                .collect(),
-        )
+        let walks = poses
+            .into_iter()
+            .map(|(id, pose)| {
+                let speed = pose.stride.clamp(0.0, 1.0) * HIDER_SPEED;
+                let gait = Gait {
+                    rough: speed,
+                    speed,
+                    phase: pose.phase.rem_euclid(TAU),
+                    air: pose.air.clamp(0.0, 1.0),
+                    ..Gait::at(Vec2::ZERO, f64::NEG_INFINITY)
+                };
+                (id, gait)
+            })
+            .collect();
+        Gaits { walks, at_ms: 0.0 }
     }
 }
 
@@ -244,9 +254,12 @@ mod tests {
         gaits.update(&[avatar(1, 0.1), caught], 2.0 * FRAME_MS);
         assert!(gaits.pose(PlayerId(1)).stride > 0.0);
         assert_eq!(gaits.pose(PlayerId(2)), Pose::default());
-        assert_eq!(gaits.0.keys().copied().collect::<Vec<_>>(), [PlayerId(1)]);
+        assert_eq!(
+            gaits.walks.keys().copied().collect::<Vec<_>>(),
+            [PlayerId(1)]
+        );
         gaits.update(&[], 3.0 * FRAME_MS);
-        assert!(gaits.0.is_empty());
+        assert!(gaits.walks.is_empty());
     }
 
     #[test]

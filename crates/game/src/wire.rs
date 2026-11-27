@@ -226,8 +226,9 @@ mod tests {
         });
         let mut bytes = encode(&world);
         assert_eq!(decode::<World>(&bytes), Ok(world));
-        // The prop's material is the last byte before the empty spawn list.
-        let at = bytes.len() - 2;
+        // The prop's material is the last byte before the empty spawn and pad
+        // lists.
+        let at = bytes.len() - 3;
         assert_eq!(bytes[at], Material::Water as u8);
         bytes[at] = 200;
         assert_eq!(decode::<World>(&bytes).err(), Some(WireError::Malformed));

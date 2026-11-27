@@ -88,10 +88,14 @@ fn vertical(p: Vec2, y: f32, vy: f32, jump: bool, world: &World) -> (f32, f32) {
         .fold(f32::INFINITY, f32::min);
     let mut vy = vy;
     if y <= floor + STANDING && vy <= 0.0 {
-        vy = if jump {
-            launch_speed(JUMP_APEX)
-        } else {
-            return (floor, 0.0);
+        let pad = world
+            .pads
+            .iter()
+            .find(|d| (d.y - floor).abs() < STANDING && d.center.distance(p) < d.radius);
+        vy = match pad {
+            Some(d) => d.boost,
+            None if jump => launch_speed(JUMP_APEX),
+            None => return (floor, 0.0),
         };
     }
     // Exact for constant gravity, so the apex is the same at any tick rate.
@@ -362,6 +366,34 @@ mod tests {
         assert!(top + HEIGHT <= base + 1e-4, "head stays under: {top}");
         assert!(top > base - HEIGHT - 0.1, "reached the underside: {top}");
         assert_eq!(path[29].y, 0.0);
+    }
+
+    #[test]
+    fn a_pad_throws_an_avatar_to_its_apex_and_lands_it_on_a_counter() {
+        let mut world = ahead(0.0, 9.0);
+        world.pads.push(crate::world::Pad {
+            center: Vec2::new(0.0, 0.0),
+            radius: 0.7,
+            y: 0.0,
+            boost: launch_speed(12.0),
+        });
+        let still = heights(Body::default(), &Input::default(), 30, &world);
+        let apex = still.iter().map(|b| b.y).fold(0.0, f32::max);
+        assert!((apex - 12.0).abs() < 0.6, "apex {apex}");
+
+        let mut body = Body::default();
+        let mut top = Body::default();
+        for t in 0..60 {
+            // Rise clear of the counter's face, then steer over its middle.
+            let fwd = if t > 3 && body.pos.y < 2.0 { 1.0 } else { 0.0 };
+            body = step(body, &walk(Vec2::new(fwd, 0.0), 0.0), HIDER_SPEED, &world);
+            if body.y == 9.0 && body.vy == 0.0 {
+                top = body;
+                break;
+            }
+        }
+        assert_eq!(top.y, 9.0, "landed on the counter: {body:?}");
+        assert!((1.0..3.0).contains(&top.pos.y), "on top of it: {top:?}");
     }
 
     #[test]

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::geom::{Aabb2, Footprint, Vec2, Vec3, clip, finite};
 use crate::model::SceneKind;
+use crate::physics::launch_speed;
 use crate::rng::Rng;
 use nav::NavGrid;
 
@@ -23,6 +24,11 @@ pub const SPAWNS: usize = 16;
 /// The share of walkable cells that must be one connected region.
 pub const MIN_CONNECTED: f32 = 0.85;
 const MAX_ATTEMPTS: u64 = 32;
+pub const PAD_RADIUS: f32 = 0.7;
+/// Between a pad's rim and the solid it serves.
+const PAD_GAP: f32 = 0.4;
+/// How far above the top of its solid a pad's throw peaks.
+const PAD_CLEARANCE: f32 = 3.0;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Shape {
@@ -92,6 +98,19 @@ impl Solid {
     }
 }
 
+/// A glowing disc on a surface at height `y`. An avatar standing on it is
+/// thrown upward at `boost` u/s.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pad {
+    pub center: Vec2,
+    #[serde(deserialize_with = "finite")]
+    pub radius: f32,
+    #[serde(deserialize_with = "finite")]
+    pub y: f32,
+    #[serde(deserialize_with = "finite")]
+    pub boost: f32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct World {
     pub kind: SceneKind,
@@ -101,6 +120,7 @@ pub struct World {
     pub props: Vec<Prop>,
     /// Walkable, mutually reachable, and spread apart. Index 0 is the seeker's.
     pub spawns: Vec<Vec2>,
+    pub pads: Vec<Pad>,
 }
 
 impl World {
@@ -112,6 +132,7 @@ impl World {
             solids: Vec::new(),
             props: Vec::new(),
             spawns: Vec::new(),
+            pads: Vec::new(),
         }
     }
 
@@ -164,13 +185,14 @@ pub(crate) fn generate_counted(kind: SceneKind, seed: u64) -> (World, u64) {
             SceneKind::City => city::build(&mut b),
             SceneKind::Kitchen => kitchen::build(&mut b),
         }
-        let (solids, props) = (b.solids, b.props);
+        let (solids, props, pads) = (b.solids, b.props, b.pads);
         let mut world = World {
             kind,
             bounds: square(),
             solids,
             props,
             spawns: Vec::new(),
+            pads,
         };
         let grid = NavGrid::new(&world);
         let connected = grid.connectivity();
@@ -191,6 +213,7 @@ struct Builder<'a> {
     rng: &'a mut Rng,
     solids: Vec<Solid>,
     props: Vec<Prop>,
+    pads: Vec<Pad>,
     /// Regions nothing may be placed in, such as doorways.
     keep_out: Vec<Aabb2>,
     /// `solids[..structure]` are walls. Furniture may sit flush against them.
@@ -203,6 +226,7 @@ impl<'a> Builder<'a> {
             rng,
             solids: Vec::new(),
             props: Vec::new(),
+            pads: Vec::new(),
             keep_out: Vec::new(),
             structure: 0,
         }
@@ -237,6 +261,75 @@ impl<'a> Builder<'a> {
             color: paint.color,
             material: paint.material,
         });
+    }
+
+    /// A box that blocks from `y0` to `y1`, drawn there: a table top, a
+    /// shelf, a tree canopy. Avatars walk under it if `y0` clears their heads.
+    fn platform(&mut self, shape: Shape, b: Aabb2, y0: f32, y1: f32, paint: Paint) {
+        let c = b.center();
+        let footprint = match shape {
+            Shape::Box => Footprint::Aabb(b),
+            Shape::Cylinder => Footprint::Circle {
+                center: c,
+                radius: (b.max.x - b.min.x) / 2.0,
+            },
+        };
+        self.solids.push(Solid {
+            shape: footprint,
+            height: y1,
+            base: y0,
+        });
+        self.deco(
+            shape,
+            Vec3::new(c.x, (y0 + y1) / 2.0, c.y),
+            Vec3::new(b.max.x - b.min.x, y1 - y0, b.max.y - b.min.y),
+            paint,
+        );
+    }
+
+    /// A launch pad on the surface at `y` that throws feet `apex` above it.
+    /// Keeps other things off it.
+    fn pad(&mut self, center: Vec2, y: f32, apex: f32) {
+        self.pads.push(Pad {
+            center,
+            radius: PAD_RADIUS,
+            y,
+            boost: launch_speed(apex),
+        });
+        self.keep_out
+            .push(Aabb2::centered(center, Vec2::new(PAD_RADIUS, PAD_RADIUS)));
+    }
+
+    /// A ground pad beside each of up to `n` of the tallest solids in
+    /// `candidates`, each throwing high enough to land on top of its solid.
+    fn pads_by(&mut self, n: usize, candidates: std::ops::Range<usize>) {
+        let mut tall: Vec<usize> = candidates.filter(|&i| i >= self.structure).collect();
+        tall.sort_by(|&a, &b| self.solids[b].height.total_cmp(&self.solids[a].height));
+        let mut placed = 0;
+        for i in tall {
+            if placed == n {
+                break;
+            }
+            let s = self.solids[i];
+            let half = Vec2::new(PAD_RADIUS, PAD_RADIUS);
+            let b = s.shape.bounds();
+            let c = b.center();
+            let off = PAD_RADIUS + PAD_GAP;
+            let sides = [
+                Vec2::new(c.x, b.min.y - off),
+                Vec2::new(c.x, b.max.y + off),
+                Vec2::new(b.min.x - off, c.y),
+                Vec2::new(b.max.x + off, c.y),
+            ];
+            let start = self.rng.below(sides.len());
+            let spot = (0..sides.len())
+                .map(|k| sides[(start + k) % sides.len()])
+                .find(|&p| self.fits(Aabb2::centered(p, half), 0.3));
+            if let Some(p) = spot {
+                self.pad(p, 0.0, s.height + PAD_CLEARANCE);
+                placed += 1;
+            }
+        }
     }
 
     /// Blocks without a prop of its own. The caller draws it in parts.
@@ -381,6 +474,44 @@ mod tests {
                         let want = if i == 0 { 8.0 } else { 6.0 };
                         assert!(d >= want, "{kind:?} seed {seed}: spawns {i}-{j} {d}");
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_world_has_pads_that_reach_the_top_of_what_they_stand_by() {
+        for kind in SceneKind::ALL {
+            for seed in 0..60 {
+                let w = World::generate(kind, seed);
+                assert!(w.pads.len() >= 3, "{kind:?} {seed}: {} pads", w.pads.len());
+                for d in &w.pads {
+                    assert!(
+                        w.solids
+                            .iter()
+                            .filter(|s| blocks(s, d.y))
+                            .all(|s| s.shape.distance(d.center) >= d.radius),
+                        "{kind:?} {seed}: pad at {:?} is clear",
+                        d.center
+                    );
+                    let apex = d.y + d.boost * d.boost / (2.0 * crate::physics::GRAVITY);
+                    let beside = w
+                        .solids
+                        .iter()
+                        .filter(|s| s.shape.distance(d.center) < d.radius + 1.0)
+                        .map(|s| s.height)
+                        .fold(0.0, f32::max);
+                    assert!(beside > d.y, "{kind:?} {seed}: pad stands by something");
+                    assert!(
+                        apex > beside + 1.0,
+                        "{kind:?} {seed}: apex {apex} over {beside}"
+                    );
+                }
+                for s in &w.spawns {
+                    assert!(
+                        w.pads.iter().all(|d| d.center.distance(*s) > d.radius),
+                        "{kind:?} {seed}: spawn {s:?} on a pad"
+                    );
                 }
             }
         }

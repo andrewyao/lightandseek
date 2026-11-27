@@ -30,6 +30,7 @@ pub(super) fn build(b: &mut Builder) {
             building_lot(b, lot);
         }
     }
+    b.pads_by(4, b.structure..b.solids.len());
     let area = Aabb2::centered(Vec2::ZERO, Vec2::new(HALF_EXTENT, HALF_EXTENT));
     for _ in 0..b.count(6, 10) {
         let half = b.oriented(1.9, 0.9);

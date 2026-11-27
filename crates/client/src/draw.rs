@@ -14,6 +14,11 @@ use crate::gait::Gaits;
 
 pub const SEEKER: [f32; 3] = [0.9, 0.16, 0.12];
 const WEDGE: [f32; 4] = [0.95, 0.05, 0.05, 0.8];
+const PAD: [f32; 3] = [0.25, 0.95, 1.0];
+/// Rings rise off each pad, this many at once, each over this long.
+const PAD_RINGS: usize = 3;
+const RING_MS: f64 = 1200.0;
+const RING_RISE: f32 = 2.5;
 
 /// Hider colours, none of them close to the seeker's red.
 const PALETTE: [[f32; 3]; 8] = [
@@ -137,6 +142,15 @@ pub fn scene(
         })
         .collect();
     let mut wedges = Vec::new();
+    for d in &world.pads {
+        let at = Vec3::new(d.center.x, d.y, d.center.y);
+        let disc = Vec3::new(2.0 * d.radius, 0.04, 2.0 * d.radius);
+        instances.push(
+            Instance::new(Shape::Cylinder, at + Vec3::Y * 0.02, disc, 0.0, PAD)
+                .with_material(Material::Glow),
+        );
+        wedges.extend(pad_rings(at, d.radius, gaits.at_ms()));
+    }
     for a in avatars.iter().filter(|a| a.status == Status::Active) {
         let feet = feet(a.body);
         if hidden != Some(a.id) {
@@ -162,6 +176,21 @@ pub fn scene(
         wedges,
         env: environment(world.kind),
     }
+}
+
+/// Translucent rings rising off a pad at `at` and fading as they go.
+fn pad_rings(at: Vec3, radius: f32, now_ms: f64) -> impl Iterator<Item = Wedge> {
+    (0..PAD_RINGS).map(move |i| {
+        let t = ((now_ms / RING_MS + i as f64 / PAD_RINGS as f64).fract()) as f32;
+        let [r, g, b] = PAD;
+        Wedge {
+            center: at + Vec3::Y * (0.05 + t * RING_RISE),
+            yaw: 0.0,
+            half_angle: std::f32::consts::PI,
+            radius: radius * (1.0 - 0.3 * t),
+            color: [r, g, b, 0.45 * (1.0 - t)],
+        }
+    })
 }
 
 /// Third person behind `body`, looking along `yaw`.
@@ -287,6 +316,35 @@ mod tests {
     }
 
     #[test]
+    fn pads_glow_and_send_up_rings_that_fade_as_they_rise() {
+        let mut world = World::open(SceneKind::Park);
+        world.pads.push(game::Pad {
+            center: Vec2::new(3.0, -2.0),
+            radius: 0.7,
+            y: 1.5,
+            boost: 10.0,
+        });
+        let mut gaits = Gaits::default();
+        gaits.update(&[], 400.0);
+        let s = scene(&world, &[], None, &gaits);
+        assert_eq!(s.instances.len(), 1);
+        let disc = s.instances[0];
+        assert_eq!(disc.material, Material::Glow);
+        assert!(centre(&disc).abs_diff_eq(Vec3::new(3.0, 1.52, -2.0), 1e-5));
+        assert_eq!(s.wedges.len(), PAD_RINGS);
+        let mut rings = s.wedges.clone();
+        rings.sort_by(|a, b| a.center.y.total_cmp(&b.center.y));
+        assert!(rings.iter().all(|w| w.center.y > 1.5), "above the pad");
+        assert!(
+            rings.windows(2).all(|w| w[0].color[3] > w[1].color[3]),
+            "higher rings are fainter"
+        );
+        gaits.update(&[], 700.0);
+        let later = scene(&world, &[], None, &gaits);
+        assert_ne!(later.wedges[0].center.y, s.wedges[0].center.y, "they move");
+    }
+
+    #[test]
     fn the_seeker_is_red_with_a_catch_wedge_and_the_caught_are_not_drawn() {
         let world = World::open(SceneKind::City);
         let seeker = avatar(1, Role::Seeker, Status::Active, Vec2::new(2.0, -1.0));
@@ -394,6 +452,7 @@ mod tests {
         let mut world = World::generate(SceneKind::City, 3);
         world.solids.clear();
         world.props.clear();
+        world.pads.clear();
         world.solids.push(game::Solid {
             shape: game::Footprint::Aabb(game::Aabb2::centered(
                 Vec2::new(0.0, -gap - 0.5),

@@ -651,6 +651,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_shader_numbers_every_material_as_the_engine_does() {
+        use crate::draw::Material;
+        let source = include_str!("shader.wgsl");
+        for (m, name) in [
+            (Material::Plain, "PLAIN"),
+            (Material::Wood, "WOOD"),
+            (Material::Brick, "BRICK"),
+            (Material::Plaster, "PLASTER"),
+            (Material::Concrete, "CONCRETE"),
+            (Material::Asphalt, "ASPHALT"),
+            (Material::Tile, "TILE"),
+            (Material::Grass, "GRASS"),
+            (Material::Foliage, "FOLIAGE"),
+            (Material::Fabric, "FABRIC"),
+            (Material::Metal, "METAL"),
+            (Material::Water, "WATER"),
+            (Material::Glow, "GLOW"),
+        ] {
+            let want = format!("const {name}: u32 = {}u;", m.id());
+            assert!(source.contains(&want), "shader.wgsl lacks `{want}`");
+        }
+    }
+
     /// WGSL forbids mixing bitwise and arithmetic operators without
     /// parentheses (`a * b ^ c`). Chrome's compiler enforces it; naga, and
     /// so every other test here, does not.

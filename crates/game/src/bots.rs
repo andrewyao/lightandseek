@@ -4,8 +4,10 @@
 use crate::geom::{Vec2, facing, yaw_toward};
 use crate::model::Body;
 use crate::model::{AvatarState, Input, Phase, PlayerId, Role, Status, Tick};
+use crate::physics::{GRAVITY, JUMP_APEX, STEP_UP};
 use crate::rng::Rng;
 use crate::rules::{CATCH_DIST, DT, in_sight, speed};
+use crate::world::PAD_RADIUS;
 use crate::world::World;
 use crate::world::nav::NavGrid;
 
@@ -56,8 +58,17 @@ enum Mind {
     Seeker {
         visited: Vec<bool>,
         chasing: Option<PlayerId>,
+        boarding: Option<Board>,
     },
     Hider(Hide),
+}
+
+/// A seeker on its way up to a hider out of jumping reach: walking to the
+/// pad, then in the air steering for where the hider was.
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct Board {
+    pad: Vec2,
+    target: Vec2,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -78,6 +89,7 @@ impl Brain {
                 Role::Seeker => Mind::Seeker {
                     visited: vec![false; regions],
                     chasing: None,
+                    boarding: None,
                 },
                 Role::Hider => Mind::Hider(Hide::Choosing),
             },
@@ -103,12 +115,28 @@ impl Brain {
         }
         self.last_pos = me.body.pos;
         match &mut self.mind {
-            Mind::Seeker { visited, chasing } => {
+            Mind::Seeker {
+                visited,
+                chasing,
+                boarding,
+            } => {
                 let Phase::Seeking { .. } = s.phase else {
                     return still(me.body.yaw);
                 };
                 if let Some(r) = region(me.body.pos) {
                     visited[r] = true;
+                }
+                if let Some(b) = *boarding {
+                    if me.body.vy != 0.0 {
+                        return toward(me.body.pos, b.target);
+                    }
+                    let landed_high = me.body.y > STEP_UP;
+                    let gave_up = self.path.is_empty() && me.body.pos.distance(b.pad) > PAD_RADIUS;
+                    if landed_high || gave_up {
+                        *boarding = None;
+                    } else {
+                        return self.follow(me.body.pos, me.body.yaw);
+                    }
                 }
                 let target = s
                     .avatars
@@ -128,6 +156,16 @@ impl Brain {
                 if let Some(t) = target {
                     *chasing = Some(t.id);
                     self.path.clear();
+                    if t.body.y - me.body.y > JUMP_APEX + JUMP_FOR
+                        && let Some((pad, path)) = board(s, t.body)
+                    {
+                        *boarding = Some(Board {
+                            pad,
+                            target: t.body.pos,
+                        });
+                        self.path = path;
+                        return self.follow(me.body.pos, me.body.yaw);
+                    }
                     let above = t.body.y - me.body.y;
                     let near = t.body.pos.distance(me.body.pos) < CATCH_DIST;
                     return Input {
@@ -199,6 +237,26 @@ fn toward(from: Vec2, to: Vec2) -> Input {
         yaw: yaw_toward(to - from),
         jump: false,
     }
+}
+
+/// The ground pad nearest `target` that throws high enough to reach it, and
+/// a path onto it.
+fn board(s: &Senses, target: Body) -> Option<(Vec2, Vec<Vec2>)> {
+    let me = s.me.body;
+    let pad = s
+        .world
+        .pads
+        .iter()
+        .filter(|d| (d.y - me.y).abs() <= STEP_UP)
+        .filter(|d| d.y + d.boost * d.boost / (2.0 * GRAVITY) > target.y + JUMP_FOR)
+        .min_by(|a, b| {
+            let (da, db) = (a.center.distance(target.pos), b.center.distance(target.pos));
+            da.total_cmp(&db)
+        })?;
+    let near = s.nav.nearest_walkable(pad.center)?;
+    let mut path = s.nav.path(me.pos, near)?;
+    path.push(pad.center);
+    Some((pad.center, path))
 }
 
 fn region(p: Vec2) -> Option<usize> {
@@ -319,6 +377,50 @@ mod tests {
                 "seed {seed}: hider at {hider_at:?} never caught"
             );
         }
+    }
+
+    #[test]
+    fn a_bot_seeker_rides_a_pad_up_to_a_hider_on_a_counter() {
+        let mut world = World::open(SceneKind::Kitchen);
+        let counter = crate::geom::Aabb2::centered(Vec2::new(0.0, 8.0), Vec2::new(2.0, 2.0));
+        world.solids.push(crate::world::Solid::ground(
+            crate::geom::Footprint::Aabb(counter),
+            9.0,
+        ));
+        world.pads.push(crate::world::Pad {
+            center: Vec2::new(0.0, 4.9),
+            radius: PAD_RADIUS,
+            y: 0.0,
+            boost: physics::launch_speed(12.0),
+        });
+        let nav = NavGrid::new(&world);
+        let mut rng = Rng::new(4);
+        let mut brain = Brain::new(Role::Seeker);
+        let mut seeker = avatar(1, Role::Seeker, Vec2::new(0.0, -6.0));
+        let mut hider = avatar(2, Role::Hider, Vec2::new(0.0, 6.8));
+        hider.body.y = 9.0;
+        let phase = Phase::Seeking {
+            until: Tick(10_000),
+        };
+        let caught_at = (0..600).find(|&t| {
+            let avatars = [seeker, hider];
+            let senses = Senses {
+                me: seeker,
+                now: Tick(t),
+                phase,
+                avatars: &avatars,
+                world: &world,
+                nav: &nav,
+            };
+            let input = brain.think(&senses, &mut rng).clamped();
+            seeker.body = physics::step(seeker.body, &input, SEEKER_SPEED, &world);
+            can_catch(seeker.body, hider.body, &world)
+        });
+        assert!(
+            caught_at.is_some(),
+            "never caught; ended at {:?}",
+            seeker.body
+        );
     }
 
     #[test]

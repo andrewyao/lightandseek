@@ -81,6 +81,10 @@ fn vs_shadow(
     @location(6) color: vec4<f32>,
 ) -> @builtin(position) vec4<f32> {
     let m = mat4x4<f32>(m0, m1, m2, m3);
+    // A light source casts no shadow: put it behind the sun's far plane.
+    if u32(color.a + 0.5) == GLOW {
+        return vec4<f32>(0.0, 0.0, -2.0, 1.0);
+    }
     return g.sun_view_proj * m * vec4<f32>(pos, 1.0);
 }
 
@@ -137,6 +141,11 @@ const FOLIAGE: u32 = 8u;
 const FABRIC: u32 = 9u;
 const METAL: u32 = 10u;
 const WATER: u32 = 11u;
+const GLOW: u32 = 12u;
+// How much brighter than its colour a glowing surface shines, and how much
+// of the usual fog it takes.
+const GLOW_GAIN: f32 = 2.2;
+const GLOW_FOG: f32 = 0.35;
 
 // The step for finite-difference bumps, in world units.
 const BUMP_STEP: f32 = 0.004;
@@ -340,6 +349,11 @@ fn shade(in: Lit, base: vec3<f32>) -> vec4<f32> {
     let geo = normalize(rot * local_n);
     // fwidth sums both screen axes, so a pixel spans about half the footprint.
     let detail = 1.0 - smoothstep(1.0, 3.0, footprint / feature(in.material));
+    if in.material == GLOW {
+        let f = smoothstep(g.fog.x, g.fog.y, distance(in.world, g.eye.xyz)) * GLOW_FOG;
+        let c = mix(base * GLOW_GAIN, g.sky.rgb, f);
+        return vec4<f32>(select(c, encode(c), g.fog.z > 0.5), 1.0);
+    }
     var albedo = base;
     var n = geo;
     if in.material != PLAIN {
