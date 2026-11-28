@@ -15,13 +15,15 @@ use std::collections::{BTreeMap, VecDeque};
 use crate::bots::{Brain, Senses};
 use crate::geom::Vec2;
 use crate::model::{
-    AvatarState, Body, ConnId, Control, Input, Link, LobbyConfig, Member, Phase, PlayerId, Refusal,
-    Role, SceneKind, Seat, Status, Tick,
+    AvatarState, Body, Cause, ConnId, Control, Input, Link, LobbyConfig, Member, Phase, PlayerId,
+    Refusal, Role, SceneKind, Seat, Status, Tick,
 };
-use crate::physics;
+use crate::physics::{self, STEP_UP};
 use crate::rng::Rng;
 use crate::rules::{
-    GRACE_TICKS, MAX_BOTS, MAX_HUMANS, MAX_NAME, RESULTS_TICKS, can_catch, mobility, secs,
+    DANGER_SECS, DRINK_SECS, FOOD_BITE, FOOD_HEIGHT, FOOD_REACH, FOOD_REGROW_SECS, FOOD_SECS,
+    GRACE_TICKS, MAX_BOTS, MAX_FOOD, MAX_HUMANS, MAX_NAME, RESULTS_TICKS, Vitals, WATER_SECS, Zone,
+    can_catch, mobility, secs, zone_at,
 };
 use crate::wire::{self, ClientMsg, Frame, ServerMsg, WireError};
 use crate::world::World;
@@ -76,6 +78,10 @@ struct Round {
     clock: Clock,
     seeker: PlayerId,
     avatars: BTreeMap<PlayerId, Avatar>,
+    /// Ticks the seek phase lasts, for the zone's schedule.
+    seek: u32,
+    /// Bit `i` is set while `world.food[i]` is ripe.
+    food: u64,
 }
 
 /// A round's phases. `Phase` adds `Lobby` for the wire.
@@ -100,6 +106,8 @@ impl Clock {
 struct Avatar {
     state: AvatarState,
     driver: Driver,
+    /// Only a hider's change.
+    vitals: Vitals,
 }
 
 #[derive(Debug)]
@@ -498,9 +506,17 @@ impl Room {
                 role,
                 status: Status::Active,
             };
-            avatars.insert(id, Avatar { state, driver });
+            avatars.insert(
+                id,
+                Avatar {
+                    state,
+                    driver,
+                    vitals: Vitals::FULL,
+                },
+            );
         }
         let until = self.now.plus(secs(self.config.hide_secs.into()));
+        let food = all_ripe(world.food.len());
         let sent = world.clone();
         self.stage = Stage::Round(Box::new(Round {
             world,
@@ -508,6 +524,8 @@ impl Room {
             clock: Clock::Hiding { until },
             seeker,
             avatars,
+            seek: secs(self.config.seek_secs.into()),
+            food,
         }));
         let msg = ServerMsg::RoundStart {
             world: sent,
@@ -581,6 +599,7 @@ impl Room {
             return;
         }
         r.simulate(now, &mut self.rng);
+        r.sustain(now, &mut self.rng, step);
         if let Clock::Seeking { .. } = r.clock {
             let seeker = r.avatars[&r.seeker].state;
             for a in r.avatars.values_mut() {
@@ -627,9 +646,13 @@ impl Room {
     /// One snapshot per connection. While hiding, the seeker's has no hiders.
     fn push_snapshots(&self, step: &mut Step) {
         let phase = self.phase();
+        let (zone, food) = match &self.stage {
+            Stage::Lobby => (Zone::EVERYWHERE, 0),
+            Stage::Round(r) => (r.zone(self.now), r.food),
+        };
         for (id, conn) in self.connected() {
-            let (avatars, ack) = match &self.stage {
-                Stage::Lobby => (Vec::new(), Tick(0)),
+            let (avatars, ack, vitals) = match &self.stage {
+                Stage::Lobby => (Vec::new(), Tick(0), None),
                 Stage::Round(r) => {
                     let mine = r.avatars.get(&id);
                     let blind = matches!(phase, Phase::Hiding { .. })
@@ -644,7 +667,10 @@ impl Room {
                         Some(Driver::Human(inputs)) => inputs.last.tick,
                         _ => Tick(0),
                     };
-                    (avatars, ack)
+                    let vitals = mine
+                        .filter(|a| a.state.role == Role::Hider && a.state.status == Status::Active)
+                        .map(|a| a.vitals);
+                    (avatars, ack, vitals)
                 }
             };
             let msg = ServerMsg::Snapshot {
@@ -652,6 +678,9 @@ impl Room {
                 phase,
                 ack,
                 avatars,
+                zone,
+                food,
+                vitals,
             };
             step.push(To::One(conn), &msg);
         }
@@ -667,10 +696,78 @@ impl Round {
         step.push(To::All, &ServerMsg::RoundEnd { winner });
     }
 
+    fn zone(&self, now: Tick) -> Zone {
+        zone_at(&self.world, self.clock.phase(), self.seek, now)
+    }
+
+    /// Hunger, thirst, eating, drinking, and the danger zone, for every
+    /// living hider in id order, then food regrowth.
+    fn sustain(&mut self, now: Tick, rng: &mut Rng, step: &mut Step) {
+        let zone = self.zone(now);
+        let Round {
+            world,
+            food,
+            avatars,
+            ..
+        } = self;
+        let per_tick = |s: u32| 1.0 / secs(s) as f32;
+        for a in avatars.values_mut() {
+            let (s, v) = (&mut a.state, &mut a.vitals);
+            if s.role != Role::Hider || s.status != Status::Active {
+                continue;
+            }
+            let body = s.body;
+            v.food = (v.food - per_tick(FOOD_SECS)).max(0.0);
+            v.water = (v.water - per_tick(WATER_SECS)).max(0.0);
+            let wet = body.y <= STEP_UP
+                && world
+                    .springs
+                    .iter()
+                    .any(|w| w.center.distance(body.pos) < w.radius);
+            if wet {
+                v.water = (v.water + per_tick(DRINK_SECS)).min(1.0);
+            }
+            for (i, f) in world.food.iter().enumerate().take(MAX_FOOD) {
+                let bit = 1u64 << i;
+                if *food & bit != 0
+                    && Vec2::new(f.x, f.z).distance(body.pos) < FOOD_REACH
+                    && (body.y - f.y).abs() < FOOD_HEIGHT
+                {
+                    *food &= !bit;
+                    v.food = (v.food + FOOD_BITE).min(1.0);
+                }
+            }
+            v.danger = if zone.contains(body) {
+                0
+            } else {
+                v.danger.saturating_add(1)
+            };
+            let cause = if v.water <= 0.0 {
+                Some(Cause::Thirst)
+            } else if u32::from(v.danger) > secs(DANGER_SECS) {
+                Some(Cause::Zone)
+            } else {
+                None
+            };
+            if let Some(cause) = cause {
+                s.status = Status::Died(cause);
+                step.push(To::All, &ServerMsg::Died { hider: s.id, cause });
+            }
+        }
+        let regrow = per_tick(FOOD_REGROW_SECS);
+        for i in 0..world.food.len().min(MAX_FOOD) {
+            let bit = 1u64 << i;
+            if *food & bit == 0 && rng.chance(regrow) {
+                *food |= bit;
+            }
+        }
+    }
+
     /// Moves every avatar one step. Bots decide from the state at the start
     /// of the tick, so avatar order does not change what they see.
     fn simulate(&mut self, now: Tick, rng: &mut Rng) {
         let before: Vec<AvatarState> = self.avatars.values().map(|a| a.state).collect();
+        let zone = self.zone(now);
         for a in self.avatars.values_mut() {
             let input = match &mut a.driver {
                 Driver::Human(inputs) => inputs.next(),
@@ -682,16 +779,29 @@ impl Round {
                         avatars: &before,
                         world: &self.world,
                         nav: &self.nav,
+                        zone,
+                        vitals: (a.state.role == Role::Hider).then_some(a.vitals),
+                        food: self.food,
                     };
                     brain.think(&senses, rng).clamped()
                 }
             };
             let s = &mut a.state;
-            s.body = match mobility(self.clock.phase(), s.role, s.status) {
+            let food = (s.role == Role::Hider).then_some(a.vitals.food);
+            s.body = match mobility(self.clock.phase(), s.role, s.status, food) {
                 Some(speed) => physics::step(s.body, &input, speed, &self.world),
                 None => physics::fall(s.body, &self.world),
             };
         }
+    }
+}
+
+/// A mask with the first `n` of `MAX_FOOD` bits set.
+fn all_ripe(n: usize) -> u64 {
+    match n {
+        0 => 0,
+        n if n >= MAX_FOOD => u64::MAX,
+        n => (1u64 << n) - 1,
     }
 }
 

@@ -6,7 +6,7 @@ use crate::model::Body;
 use crate::model::{AvatarState, Input, Phase, PlayerId, Role, Status, Tick};
 use crate::physics::{GRAVITY, JUMP_APEX, STEP_UP};
 use crate::rng::Rng;
-use crate::rules::{CATCH_DIST, DT, in_sight, speed};
+use crate::rules::{CATCH_DIST, DT, MAX_FOOD, Vitals, Zone, in_sight, speed, zone};
 use crate::world::PAD_RADIUS;
 use crate::world::World;
 use crate::world::nav::NavGrid;
@@ -23,6 +23,14 @@ const WAYPOINT_REACHED: f32 = 0.3;
 const STUCK_TICKS: u32 = 10;
 /// A seeker jumps for a hider this far above its feet, within reach.
 const JUMP_FOR: f32 = 0.3;
+/// A hider bot heads for water below this, and drinks until `QUENCHED`.
+const THIRSTY: f32 = 0.35;
+const QUENCHED: f32 = 0.95;
+/// Below this a hider bot heads for water even with the seeker in sight:
+/// thirst is certain death, the seeker is not.
+const PARCHED: f32 = 0.15;
+/// A hider bot heads for food below this.
+const PECKISH: f32 = 0.4;
 
 /// What a brain may see of the room this tick.
 pub(crate) struct Senses<'a> {
@@ -32,6 +40,12 @@ pub(crate) struct Senses<'a> {
     pub avatars: &'a [AvatarState],
     pub world: &'a World,
     pub nav: &'a NavGrid,
+    /// The safe zone now.
+    pub zone: Zone,
+    /// The brain's own meters, when it is a hider.
+    pub vitals: Option<Vitals>,
+    /// Bit `i` set while `world.food[i]` is ripe.
+    pub food: u64,
 }
 
 impl Senses<'_> {
@@ -79,6 +93,15 @@ enum Hide {
     Covered,
     /// Running from a seeker it saw, until `until`.
     Fleeing { until: Tick },
+    /// Off to fill a meter.
+    Errand(Need),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Need {
+    Drink,
+    /// The index of the food spot it is walking to.
+    Eat(usize),
 }
 
 impl Brain {
@@ -101,7 +124,7 @@ impl Brain {
 
     pub fn think(&mut self, s: &Senses, rng: &mut Rng) -> Input {
         let me = s.me;
-        if me.status == Status::Caught {
+        if me.status != Status::Active {
             return still(me.body.yaw);
         }
         if !self.path.is_empty() && me.body.pos.distance(self.last_pos) < 0.02 {
@@ -182,8 +205,9 @@ impl Brain {
             }
             Mind::Hider(hide) => {
                 let seeker = s.avatars.iter().find(|a| a.role == Role::Seeker);
+                let parched = s.vitals.is_some_and(|v| v.water < PARCHED);
                 let threat = seeker
-                    .filter(|_| matches!(s.phase, Phase::Seeking { .. }))
+                    .filter(|_| matches!(s.phase, Phase::Seeking { .. }) && !parched)
                     .filter(|k| s.sees(k.body, FLEE_DIST, None));
                 match (*hide, threat) {
                     (Hide::Fleeing { until }, _) if s.now < until && !self.path.is_empty() => {}
@@ -193,13 +217,25 @@ impl Brain {
                             until: s.now.plus(20),
                         };
                     }
-                    (Hide::Choosing, None) => {
-                        let from = seeker.map_or(me.body.pos, |k| k.body.pos);
-                        self.path = cover(s, from, rng).unwrap_or_default();
-                        *hide = Hide::Covered;
-                    }
-                    (Hide::Fleeing { .. }, None) => *hide = Hide::Covered,
-                    (Hide::Covered, None) => {}
+                    (_, None) => match (*hide, need(s, *hide)) {
+                        (Hide::Errand(was), Some(now)) if was == now => {}
+                        (_, Some(now)) => {
+                            self.path = errand(s, now).unwrap_or_default();
+                            *hide = Hide::Errand(now);
+                        }
+                        (Hide::Choosing | Hide::Errand(_), None) => {
+                            let from = seeker.map_or(me.body.pos, |k| k.body.pos);
+                            self.path = cover(s, from, rng).unwrap_or_default();
+                            *hide = Hide::Covered;
+                        }
+                        (Hide::Fleeing { .. }, None) => *hide = Hide::Covered,
+                        (Hide::Covered, None) => {
+                            let safe = zone(s.world, 1.0);
+                            if self.path.is_empty() && !safe.contains(me.body) {
+                                *hide = Hide::Choosing;
+                            }
+                        }
+                    },
                 }
             }
         }
@@ -281,22 +317,79 @@ fn explore(s: &Senses, visited: &[bool], rng: &mut Rng) -> Option<Vec<Vec2>> {
     s.nav.path(s.me.body.pos, best?.1)
 }
 
-/// A path to a cell surrounded by solids and far from `seeker`, close enough
-/// to reach before hiding ends.
+/// What a hider should fetch now, if anything. An errand under way lasts
+/// until its meter is full or its food is gone.
+fn need(s: &Senses, hide: Hide) -> Option<Need> {
+    let v = s.vitals?;
+    let drinking = hide == Hide::Errand(Need::Drink);
+    if !s.world.springs.is_empty() && (v.water < THIRSTY || drinking && v.water < QUENCHED) {
+        return Some(Need::Drink);
+    }
+    if let Hide::Errand(Need::Eat(i)) = hide
+        && ripe(s, i)
+    {
+        return Some(Need::Eat(i));
+    }
+    if v.food >= PECKISH {
+        return None;
+    }
+    let me = s.me.body.pos;
+    (0..s.world.food.len().min(MAX_FOOD))
+        .filter(|&i| ripe(s, i))
+        .min_by(|&a, &b| {
+            let d = |i: usize| ground(s.world.food[i]).distance(me);
+            d(a).total_cmp(&d(b))
+        })
+        .map(Need::Eat)
+}
+
+fn ripe(s: &Senses, i: usize) -> bool {
+    i < MAX_FOOD && s.food & (1u64 << i) != 0
+}
+
+fn ground(p: crate::geom::Vec3) -> Vec2 {
+    Vec2::new(p.x, p.z)
+}
+
+/// A path onto the nearest spring, or onto the food spot.
+fn errand(s: &Senses, need: Need) -> Option<Vec<Vec2>> {
+    let me = s.me.body.pos;
+    let goal = match need {
+        Need::Drink => s
+            .world
+            .springs
+            .iter()
+            .map(|w| w.center)
+            .min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)))?,
+        Need::Eat(i) => ground(*s.world.food.get(i)?),
+    };
+    let mut path = s.nav.path(me, s.nav.nearest_walkable(goal)?)?;
+    path.push(goal);
+    Some(path)
+}
+
+/// A path to a cell inside the final zone, surrounded by solids and far
+/// from `seeker`, preferring cells it can reach before hiding ends.
 fn cover(s: &Senses, seeker: Vec2, rng: &mut Rng) -> Option<Vec<Vec2>> {
     let left = match s.phase {
         Phase::Hiding { until } => s.now.until(until),
         _ => 0,
     };
     let reach = (left as f32 * speed(Role::Hider) * DT * 0.6).max(3.0);
+    let safe = zone(s.world, 1.0);
     let mut best: Option<(f32, usize)> = None;
     for _ in 0..40 {
         let c = s.nav.random_reachable(rng)?;
         let at = s.nav.center(c);
-        if at.distance(s.me.body.pos) > reach {
+        if !safe.contains(Body {
+            pos: at,
+            ..Body::default()
+        }) {
             continue;
         }
-        let score = s.nav.cover(c, 2) as f32 + at.distance(seeker) * 0.3;
+        let far = at.distance(s.me.body.pos);
+        let late = if far > reach { 100.0 + far } else { 0.0 };
+        let score = s.nav.cover(c, 2) as f32 + at.distance(seeker) * 0.3 - late;
         if best.is_none_or(|(b, _)| score > b) {
             best = Some((score, c));
         }
@@ -312,7 +405,12 @@ fn flee(s: &Senses, seeker: Vec2, rng: &mut Rng) -> Option<Vec<Vec2>> {
     for _ in 0..30 {
         let c = s.nav.random_reachable(rng)?;
         let at = s.nav.center(c);
-        if (at - me).dot(away) < 0.0 {
+        if (at - me).dot(away) < 0.0
+            || !s.zone.contains(Body {
+                pos: at,
+                ..Body::default()
+            })
+        {
             continue;
         }
         let score = at.distance(seeker);
@@ -367,6 +465,9 @@ mod tests {
                     avatars: &avatars,
                     world: &world,
                     nav: &nav,
+                    zone: Zone::EVERYWHERE,
+                    vitals: None,
+                    food: 0,
                 };
                 let input = brain.think(&senses, &mut rng).clamped();
                 seeker.body = physics::step(seeker.body, &input, SEEKER_SPEED, &world);
@@ -411,6 +512,9 @@ mod tests {
                 avatars: &avatars,
                 world: &world,
                 nav: &nav,
+                zone: Zone::EVERYWHERE,
+                vitals: None,
+                food: 0,
             };
             let input = brain.think(&senses, &mut rng).clamped();
             seeker.body = physics::step(seeker.body, &input, SEEKER_SPEED, &world);
@@ -437,6 +541,9 @@ mod tests {
             avatars: &avatars,
             world: &world,
             nav: &nav,
+            zone: Zone::EVERYWHERE,
+            vitals: None,
+            food: 0,
         };
         assert_eq!(brain.think(&senses, &mut Rng::new(1)).mv, Vec2::ZERO);
     }

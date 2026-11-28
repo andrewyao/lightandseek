@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::geom::{Aabb2, Footprint, Vec2, Vec3, clip, finite};
 use crate::model::SceneKind;
-use crate::physics::launch_speed;
+use crate::physics::{GRAVITY, launch_speed};
 use crate::rng::Rng;
+use crate::rules::{MAX_FOOD, ZONE_FINAL_HALF};
 use nav::NavGrid;
 
 /// Half the side of the square play area.
@@ -29,6 +30,15 @@ pub const PAD_RADIUS: f32 = 0.7;
 const PAD_GAP: f32 = 0.4;
 /// How far above the top of its solid a pad's throw peaks.
 const PAD_CLEARANCE: f32 = 3.0;
+pub const SPRING_RADIUS: f32 = 1.0;
+/// Springs sit within this share of the final zone's half width.
+const SPRING_SPREAD: f32 = 0.6;
+pub const FOOD_SPOTS: usize = 20;
+/// Of `FOOD_SPOTS`, this many lie well inside the final zone.
+pub const CENTRAL_FOOD: usize = 4;
+/// The zone's starting ceiling clears the highest standing place by this.
+const HEADROOM: f32 = 1.0;
+const WATER: Paint = paint([70, 150, 210], Material::Water);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Shape {
@@ -111,6 +121,14 @@ pub struct Pad {
     pub boost: f32,
 }
 
+/// A shallow pool on the ground. A hider standing in it drinks.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Spring {
+    pub center: Vec2,
+    #[serde(deserialize_with = "finite")]
+    pub radius: f32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct World {
     pub kind: SceneKind,
@@ -121,6 +139,14 @@ pub struct World {
     /// Walkable, mutually reachable, and spread apart. Index 0 is the seeker's.
     pub spawns: Vec<Vec2>,
     pub pads: Vec<Pad>,
+    /// The only water. All lie well inside the final zone.
+    pub springs: Vec<Spring>,
+    /// Where food grows, at most `MAX_FOOD`. The first `CENTRAL_FOOD` lie
+    /// inside the final zone. Which are ripe is round state, not world.
+    pub food: Vec<Vec3>,
+    /// The safe zone's starting ceiling, above anywhere one can stand.
+    #[serde(deserialize_with = "finite")]
+    pub ceiling: f32,
 }
 
 impl World {
@@ -133,6 +159,9 @@ impl World {
             props: Vec::new(),
             spawns: Vec::new(),
             pads: Vec::new(),
+            springs: Vec::new(),
+            food: Vec::new(),
+            ceiling: 10.0,
         }
     }
 
@@ -193,11 +222,21 @@ pub(crate) fn generate_counted(kind: SceneKind, seed: u64) -> (World, u64) {
             props,
             spawns: Vec::new(),
             pads,
+            springs: Vec::new(),
+            food: Vec::new(),
+            ceiling: 0.0,
         };
+        world.ceiling = ceiling(&world);
         let grid = NavGrid::new(&world);
         let connected = grid.connectivity();
         world.spawns = grid.spawns(&mut rng, SPAWNS);
-        if connected >= MIN_CONNECTED && world.spawns.len() == SPAWNS {
+        supplies(&mut world, &grid, &mut rng);
+        let central = world.food.iter().take(CENTRAL_FOOD).count();
+        if connected >= MIN_CONNECTED
+            && world.spawns.len() == SPAWNS
+            && !world.springs.is_empty()
+            && central == CENTRAL_FOOD
+        {
             return (world, attempt + 1);
         }
         if best.as_ref().is_none_or(|(c, _)| connected > *c) {
@@ -206,6 +245,77 @@ pub(crate) fn generate_counted(kind: SceneKind, seed: u64) -> (World, u64) {
     }
     let (_, world) = best.expect("MAX_ATTEMPTS > 0");
     (world, MAX_ATTEMPTS)
+}
+
+/// The highest place feet can reach inside the play area, plus `HEADROOM`.
+fn ceiling(world: &World) -> f32 {
+    let tops = world
+        .solids
+        .iter()
+        .filter(|s| world.bounds.contains(s.shape.bounds().center()))
+        .map(|s| s.height);
+    let apexes = world
+        .pads
+        .iter()
+        .map(|d| d.y + d.boost * d.boost / (2.0 * GRAVITY));
+    tops.chain(apexes).fold(0.0, f32::max) + HEADROOM
+}
+
+/// Places the springs, each drawn as a pool, and the food spots, on open
+/// reachable ground clear of spawns and pads.
+fn supplies(world: &mut World, grid: &NavGrid, rng: &mut Rng) {
+    let final_half = HALF_EXTENT * ZONE_FINAL_HALF;
+    let clear_of = |p: Vec2, r: f32| {
+        world.spawns.iter().all(|s| s.distance(p) > r + 0.5)
+            && world
+                .pads
+                .iter()
+                .all(|d| d.center.distance(p) > d.radius + r)
+    };
+    let inside = |p: Vec2, half: f32| p.x.abs() <= half && p.y.abs() <= half;
+    let open: Vec<Vec2> = grid
+        .reachable()
+        .filter(|&i| grid.cover(i, 2) == 0)
+        .map(|i| grid.center(i))
+        .filter(|&p| inside(p, final_half * SPRING_SPREAD) && clear_of(p, SPRING_RADIUS))
+        .collect();
+    let n = 2 + rng.below(2);
+    world.springs = nav::spread(rng, &open, n, &[])
+        .into_iter()
+        .map(|center| Spring {
+            center,
+            radius: SPRING_RADIUS,
+        })
+        .collect();
+    for s in &world.springs {
+        world.props.push(Prop {
+            shape: Shape::Cylinder,
+            center: Vec3::new(s.center.x, 0.02, s.center.y),
+            size: Vec3::new(2.0 * s.radius, 0.04, 2.0 * s.radius),
+            color: WATER.color,
+            material: WATER.material,
+        });
+    }
+    let springs = &world.springs;
+    let ground: Vec<Vec2> = grid
+        .reachable()
+        .map(|i| grid.center(i))
+        .filter(|&p| {
+            clear_of(p, 0.3)
+                && springs
+                    .iter()
+                    .all(|s| s.center.distance(p) > s.radius + 0.5)
+        })
+        .collect();
+    let central: Vec<Vec2> = ground
+        .iter()
+        .copied()
+        .filter(|&p| inside(p, final_half - 1.0))
+        .collect();
+    let mut food = nav::spread(rng, &central, CENTRAL_FOOD, &[]);
+    let rest = nav::spread(rng, &ground, FOOD_SPOTS.min(MAX_FOOD) - food.len(), &food);
+    food.extend(rest);
+    world.food = food.into_iter().map(|p| Vec3::new(p.x, 0.0, p.y)).collect();
 }
 
 /// Accumulates matching props and solids, and keeps placements apart.
@@ -513,6 +623,67 @@ mod tests {
                         "{kind:?} {seed}: spawn {s:?} on a pad"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn every_world_has_water_and_food_safe_from_the_final_zone() {
+        let safe = crate::rules::zone(&World::open(SceneKind::Park), 1.0).half;
+        for kind in SceneKind::ALL {
+            for seed in 0..100 {
+                let w = World::generate(kind, seed);
+                let grid = NavGrid::new(&w);
+                assert!(
+                    (2..=3).contains(&w.springs.len()),
+                    "{kind:?} {seed}: {} springs",
+                    w.springs.len()
+                );
+                for s in &w.springs {
+                    assert!(
+                        s.center.x.abs() + s.radius <= safe && s.center.y.abs() + s.radius <= safe,
+                        "{kind:?} {seed}: spring {s:?} in the final zone"
+                    );
+                    assert!(
+                        grid.in_largest(s.center),
+                        "{kind:?} {seed}: spring reachable"
+                    );
+                    assert!(
+                        w.solids
+                            .iter()
+                            .filter(|x| blocks(x, 0.0))
+                            .all(|x| x.shape.distance(s.center) > s.radius),
+                        "{kind:?} {seed}: spring {s:?} clear of solids"
+                    );
+                    assert!(
+                        w.pads
+                            .iter()
+                            .all(|d| d.center.distance(s.center) > d.radius + s.radius),
+                        "{kind:?} {seed}: spring clear of pads"
+                    );
+                }
+                assert_eq!(w.food.len(), FOOD_SPOTS, "{kind:?} {seed}");
+                let central = w.food[..CENTRAL_FOOD]
+                    .iter()
+                    .filter(|f| f.x.abs() < safe && f.z.abs() < safe)
+                    .count();
+                assert_eq!(central, CENTRAL_FOOD, "{kind:?} {seed}: central food");
+                for f in &w.food {
+                    assert!(
+                        grid.in_largest(Vec2::new(f.x, f.z)),
+                        "{kind:?} {seed}: food {f:?} reachable"
+                    );
+                }
+                let highest = w
+                    .solids
+                    .iter()
+                    .filter(|s| w.bounds.contains(s.shape.bounds().center()))
+                    .map(|s| s.height)
+                    .fold(0.0, f32::max);
+                assert!(
+                    w.ceiling > highest,
+                    "{kind:?} {seed}: ceiling over every top"
+                );
             }
         }
     }

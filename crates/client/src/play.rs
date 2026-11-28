@@ -156,6 +156,14 @@ impl Play {
                     until_ms: now + TOAST_MS,
                 });
             }
+            Some(Event::Died { hider, cause }) => {
+                let roster = self.session.replica().map(|r| r.view(now).roster.to_vec());
+                let name = ui::name_of(&roster.unwrap_or_default(), hider);
+                self.toasts.push(Toast {
+                    text: ui::death(&name, cause),
+                    until_ms: now + TOAST_MS,
+                });
+            }
             Some(Event::Refused(why)) => self.ui.refused.set(Some(ui::refusal(why))),
             Some(Event::Roster) => self.ui.refused.set(None),
             Some(Event::RoundEnd { .. } | Event::Replaced) | None => {}
@@ -222,6 +230,7 @@ impl Play {
         self.zoom = Some(zoom);
         let own = view.me.filter(|_| mode == Camera::Follow).map(|me| me.id);
         let (camera, scene) = draw::shot(world, &avatars, &cam, zoom, own, aspect, &self.gaits);
+        let scene = scene.with_supplies(view.zone, &view.food);
         gpu.draw(&camera, &scene.draw());
     }
 

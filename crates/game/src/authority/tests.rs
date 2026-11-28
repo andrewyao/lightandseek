@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
+use crate::rules::{HUNGRY_PACE, STARVING_PACE};
 
 /// A room plus the sockets the shell would hold. Decodes what the room
 /// actually sent, so filtering is observed on the wire.
@@ -249,13 +250,13 @@ fn one_human_and_three_bots_finish_a_round_with_a_winner() {
         let (mut net, winner) = headless_round(seed, scene);
         let msgs = net.take(1);
         assert_eq!(round_ends(&msgs), [winner], "seed {seed}: one RoundEnd");
-        let caught = msgs
+        let out = msgs
             .iter()
-            .filter(|m| matches!(m, ServerMsg::Caught { .. }))
+            .filter(|m| matches!(m, ServerMsg::Caught { .. } | ServerMsg::Died { .. }))
             .count();
         if winner == Role::Seeker {
             seeker_wins += 1;
-            assert_eq!(caught, 3, "seed {seed}: the seeker caught every hider");
+            assert_eq!(out, 3, "seed {seed}: every hider was caught or died");
         }
 
         net.ticks(RESULTS_TICKS);
@@ -678,4 +679,250 @@ fn resuming_over_an_open_socket_tells_the_old_one_it_was_replaced() {
         net.take(1).iter().any(|m| matches!(m, ServerMsg::Replaced)),
         "the displaced socket learns why it closes, so it does not resume again"
     );
+}
+
+/// Two humans on a park, the hide phase over and a long seek begun.
+/// Returns the net and the hider's id. Both humans stand still.
+fn survival(seed: u64) -> (Net, PlayerId) {
+    let mut net = Net::new(seed);
+    let a = net.join(1, None);
+    let b = net.join(2, None);
+    net.configure(
+        1,
+        LobbyConfig {
+            scene: Some(SceneKind::Park),
+            seed: Some(seed),
+            hide_secs: 1,
+            seek_secs: 600,
+            ..config(2, 0)
+        },
+    );
+    net.send(1, &ClientMsg::Start);
+    net.tick_until(100, |p| matches!(p, Phase::Seeking { .. }));
+    let hider = if net.seeker() == a { b } else { a };
+    (net, hider)
+}
+
+fn round(net: &mut Net) -> &mut Round {
+    match &mut net.room.stage {
+        Stage::Round(r) => r,
+        Stage::Lobby => panic!("a round is running"),
+    }
+}
+
+fn hider_mut(net: &mut Net, id: PlayerId) -> &mut Avatar {
+    round(net).avatars.get_mut(&id).expect("the hider plays")
+}
+
+fn status(net: &Net, id: PlayerId) -> Status {
+    net.room
+        .avatars()
+        .iter()
+        .find(|a| a.id == id)
+        .expect("the hider plays")
+        .status
+}
+
+/// A reachable cell with `pick` true, far from the seeker.
+fn cell_where(net: &mut Net, pick: impl Fn(Vec2) -> bool) -> Vec2 {
+    let r = round(net);
+    let seeker = r.avatars[&r.seeker].state.body.pos;
+    r.nav
+        .reachable()
+        .map(|i| r.nav.center(i))
+        .find(|&p| pick(p) && p.distance(seeker) > 4.0)
+        .expect("such a cell")
+}
+
+fn put(net: &mut Net, id: PlayerId, pos: Vec2) {
+    hider_mut(net, id).state.body = Body {
+        pos,
+        ..Body::default()
+    };
+}
+
+fn deaths(msgs: &[ServerMsg]) -> Vec<(PlayerId, Cause)> {
+    msgs.iter()
+        .filter_map(|m| match m {
+            ServerMsg::Died { hider, cause } => Some((*hider, *cause)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Puts the seek `left_secs` from its end, so the zone has shrunk.
+fn late_in_the_seek(net: &mut Net, left_secs: u32) {
+    let now = net.room.now();
+    round(net).clock = Clock::Seeking {
+        until: now.plus(secs(left_secs)),
+    };
+}
+
+#[test]
+fn a_hider_outside_the_zone_for_more_than_ten_seconds_dies() {
+    let (mut net, hider) = survival(1);
+    late_in_the_seek(&mut net, 60);
+    let edge = cell_where(&mut net, |p| p.x > 19.0);
+    put(&mut net, hider, edge);
+    net.take(1);
+    net.ticks(secs(DANGER_SECS));
+    assert_eq!(status(&net, hider), Status::Active, "10 s is not more");
+    net.tick();
+    assert_eq!(status(&net, hider), Status::Died(Cause::Zone));
+    assert_eq!(deaths(&net.take(1)), [(hider, Cause::Zone)]);
+}
+
+#[test]
+fn stepping_back_into_the_zone_resets_the_danger_clock() {
+    let (mut net, hider) = survival(1);
+    late_in_the_seek(&mut net, 60);
+    let edge = cell_where(&mut net, |p| p.x > 19.0);
+    let safe = cell_where(&mut net, |p| p.x.abs() < 8.0 && p.y.abs() < 8.0);
+    put(&mut net, hider, edge);
+    net.ticks(secs(8));
+    assert!(hider_mut(&mut net, hider).vitals.danger > 0, "counting");
+    put(&mut net, hider, safe);
+    net.tick();
+    assert_eq!(hider_mut(&mut net, hider).vitals.danger, 0);
+    put(&mut net, hider, edge);
+    net.ticks(secs(8));
+    assert_eq!(status(&net, hider), Status::Active);
+}
+
+#[test]
+fn the_zone_is_whole_at_the_start_of_the_seek() {
+    let (mut net, hider) = survival(1);
+    let edge = cell_where(&mut net, |p| p.x > 19.0);
+    put(&mut net, hider, edge);
+    net.ticks(secs(DANGER_SECS + 1));
+    assert_eq!(status(&net, hider), Status::Active);
+}
+
+#[test]
+fn a_hider_with_no_water_dies_of_thirst_but_not_while_in_a_spring() {
+    let (mut net, hider) = survival(2);
+    let dry = cell_where(&mut net, |p| p.x.abs() < 15.0);
+    put(&mut net, hider, dry);
+    hider_mut(&mut net, hider).vitals.water = 0.01;
+    net.take(1);
+    net.ticks(secs(2));
+    assert_eq!(status(&net, hider), Status::Died(Cause::Thirst));
+    assert_eq!(deaths(&net.take(1)), [(hider, Cause::Thirst)]);
+
+    let (mut net, hider) = survival(2);
+    let spring = round(&mut net).world.springs[0].center;
+    put(&mut net, hider, spring);
+    hider_mut(&mut net, hider).vitals.water = 0.01;
+    net.ticks(secs(5));
+    assert_eq!(status(&net, hider), Status::Active);
+    assert!(hider_mut(&mut net, hider).vitals.water > 0.95, "drank");
+}
+
+#[test]
+fn water_runs_out_after_its_full_span() {
+    let (mut net, hider) = survival(2);
+    let spring = round(&mut net).world.springs[0].center;
+    let dry = cell_where(&mut net, |p| p.distance(spring) > 6.0 && p.x.abs() < 10.0);
+    put(&mut net, hider, dry);
+    hider_mut(&mut net, hider).vitals = Vitals::FULL;
+    net.ticks(secs(WATER_SECS) - secs(1));
+    assert_eq!(status(&net, hider), Status::Active);
+    net.ticks(secs(2));
+    assert_eq!(status(&net, hider), Status::Died(Cause::Thirst));
+}
+
+#[test]
+fn walking_onto_food_eats_it_and_an_empty_stomach_only_slows() {
+    let (mut net, hider) = survival(3);
+    let spot = round(&mut net).world.food[0];
+    put(&mut net, hider, Vec2::new(spot.x, spot.z));
+    hider_mut(&mut net, hider).vitals.food = 0.2;
+    net.tick();
+    assert_eq!(round(&mut net).food & 1, 0, "eaten");
+    let food = hider_mut(&mut net, hider).vitals.food;
+    assert!((food - 0.7).abs() < 0.01, "food {food}");
+
+    hider_mut(&mut net, hider).vitals.food = 0.0;
+    let spring = round(&mut net).world.springs[0].center;
+    put(&mut net, hider, spring);
+    round(&mut net).food = 0;
+    net.ticks(secs(30));
+    assert_eq!(status(&net, hider), Status::Active, "hunger never kills");
+}
+
+#[test]
+fn eaten_food_regrows_in_time() {
+    let (mut net, hider) = survival(3);
+    let spring = round(&mut net).world.springs[0].center;
+    put(&mut net, hider, spring);
+    round(&mut net).food = 0;
+    net.ticks(secs(FOOD_REGROW_SECS));
+    let ripe = round(&mut net).food.count_ones();
+    assert!(ripe > 0, "some food regrew");
+    let spots = round(&mut net).world.food.len() as u32;
+    assert!(ripe < spots, "but slowly: {ripe} of {spots}");
+}
+
+/// How far the hider walks in 20 ticks at `food`, straight along an open
+/// heading.
+fn walked(food: f32) -> f32 {
+    let (mut net, hider) = survival(4);
+    let start = cell_where(&mut net, |p| p.x.abs() < 10.0 && p.y.abs() < 10.0);
+    put(&mut net, hider, start);
+    hider_mut(&mut net, hider).vitals.food = food;
+    round(&mut net).food = 0;
+    let world = round(&mut net).world.clone();
+    let yaw = (0..32)
+        .map(|i| i as f32 * std::f32::consts::TAU / 32.0)
+        .find(|&yaw| world.ray_clear(start, start + crate::geom::facing(yaw) * 5.0, 0.01))
+        .expect("an open heading");
+    let conn = if net.seeker() == PlayerId(1) { 2 } else { 1 };
+    for t in 1..=20 {
+        let input = Input {
+            tick: Tick(t),
+            mv: Vec2::new(1.0, 0.0),
+            yaw,
+            jump: false,
+        };
+        net.send(conn, &ClientMsg::Input(input));
+        net.tick();
+    }
+    hider_mut(&mut net, hider).state.body.pos.distance(start)
+}
+
+#[test]
+fn low_food_slows_a_hider_and_empty_food_slows_it_more() {
+    let (full, low, empty) = (walked(1.0), walked(0.2), walked(0.0));
+    assert!((low / full - HUNGRY_PACE).abs() < 0.02, "{low} / {full}");
+    assert!(
+        (empty / full - STARVING_PACE).abs() < 0.02,
+        "{empty} / {full}"
+    );
+}
+
+#[test]
+fn hider_bots_drink_and_eat_and_outlive_their_water() {
+    for seed in 0..3 {
+        for scene in SceneKind::ALL {
+            let mut net = Net::new(seed);
+            net.join(1, None);
+            net.configure(
+                1,
+                LobbyConfig {
+                    scene: Some(scene),
+                    seed: Some(seed),
+                    seek_secs: 240,
+                    ..config(1, 3)
+                },
+            );
+            net.send(1, &ClientMsg::Start);
+            net.tick_until(20 * 260, |p| matches!(p, Phase::Results { .. }));
+            let bots: BTreeSet<PlayerId> = net.room.bots.iter().copied().collect();
+            let died: Vec<_> = deaths(&net.take(1))
+                .into_iter()
+                .filter(|(id, _)| bots.contains(id))
+                .collect();
+            assert_eq!(died, [], "{scene:?} seed {seed}: bot hiders survive");
+        }
+    }
 }

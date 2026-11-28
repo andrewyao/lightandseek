@@ -31,9 +31,10 @@ mod world;
 pub use authority::{Room, Step, To};
 pub use geom::{Aabb2, Footprint, Vec2, Vec3};
 pub use model::{
-    AvatarState, Body, ConnId, Control, Input, Link, LobbyConfig, Member, Phase, PlayerId, Refusal,
-    Role, SceneKind, Seat, Status, Tick,
+    AvatarState, Body, Cause, ConnId, Control, Input, Link, LobbyConfig, Member, Phase, PlayerId,
+    Refusal, Role, SceneKind, Seat, Status, Tick,
 };
 pub use replica::{AvatarView, Event, Replica, ViewState};
+pub use rules::{Vitals, Zone};
 pub use wire::{Frame, WireError};
-pub use world::{Material, Pad, Prop, Shape, Solid, World};
+pub use world::{Material, Pad, Prop, Shape, Solid, Spring, World};

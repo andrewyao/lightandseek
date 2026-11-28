@@ -14,13 +14,13 @@
 
 use std::collections::VecDeque;
 
-use crate::geom::Vec2;
+use crate::geom::{Vec2, Vec3};
 use crate::model::{
-    AvatarState, Body, Control, Input, LobbyConfig, Member, Phase, PlayerId, Refusal, Role, Status,
-    Tick,
+    AvatarState, Body, Cause, Control, Input, LobbyConfig, Member, Phase, PlayerId, Refusal, Role,
+    Status, Tick,
 };
 use crate::physics;
-use crate::rules::{TICK_HZ, mobility};
+use crate::rules::{MAX_FOOD, TICK_HZ, Vitals, Zone, mobility};
 use crate::wire::{self, ClientMsg, Frame, ServerMsg, WireError};
 use crate::world::World;
 
@@ -48,6 +48,10 @@ pub enum Event {
     Refused(Refusal),
     /// A newer socket resumed this player; this one is about to close.
     Replaced,
+    Died {
+        hider: PlayerId,
+        cause: Cause,
+    },
 }
 
 /// One avatar as the engine should draw it.
@@ -78,6 +82,14 @@ pub struct ViewState<'a> {
     pub hiders_left: usize,
     /// Until the current phase's deadline, by the estimated server clock.
     pub seconds_left: f32,
+    /// The safe zone. `None` in the lobby.
+    pub zone: Option<Zone>,
+    /// Ripe food, where it lies.
+    pub food: Vec<Vec3>,
+    /// Your meters, while you are a living hider.
+    pub vitals: Option<Vitals>,
+    /// Your predicted avatar stands in the danger zone during the seek.
+    pub danger: bool,
 }
 
 impl ViewState<'_> {
@@ -117,6 +129,9 @@ pub struct Replica {
     predicted: Option<AvatarState>,
     /// Estimated `local_ms - server_tick * TICK_MS`.
     clock: Option<f64>,
+    zone: Zone,
+    food: u64,
+    vitals: Option<Vitals>,
 }
 
 impl Replica {
@@ -160,6 +175,9 @@ impl Replica {
             next_input: 1,
             predicted: None,
             clock: None,
+            zone: Zone::EVERYWHERE,
+            food: 0,
+            vitals: None,
         })
     }
 
@@ -199,9 +217,15 @@ impl Replica {
                 phase,
                 ack,
                 avatars,
+                zone,
+                food,
+                vitals,
             } => {
                 self.observe_clock(tick, now_ms);
                 self.phase = phase;
+                self.zone = zone;
+                self.food = food;
+                self.vitals = vitals;
                 if phase == Phase::Lobby {
                     self.round = None;
                 }
@@ -216,6 +240,7 @@ impl Replica {
             ServerMsg::RoundEnd { winner } => Some(Event::RoundEnd { winner }),
             ServerMsg::Refused(why) => Some(Event::Refused(why)),
             ServerMsg::Replaced => Some(Event::Replaced),
+            ServerMsg::Died { hider, cause } => Some(Event::Died { hider, cause }),
         })
     }
 
@@ -233,7 +258,7 @@ impl Replica {
         }
         .clamped();
         self.next_input += 1;
-        let body = match mobility(self.phase, me.role, me.status) {
+        let body = match mobility(self.phase, me.role, me.status, self.food_level()) {
             Some(speed) => physics::step(me.body, &input, speed, world),
             None => physics::fall(me.body, world),
         };
@@ -257,7 +282,7 @@ impl Replica {
             return;
         };
         let mut body = server.body;
-        let speed = mobility(self.phase, server.role, server.status);
+        let speed = mobility(self.phase, server.role, server.status, self.food_level());
         for input in &self.pending {
             body = match speed {
                 Some(speed) => physics::step(body, input, speed, &round.world),
@@ -265,6 +290,11 @@ impl Replica {
             };
         }
         self.predicted = Some(AvatarState { body, ..server });
+    }
+
+    /// Your food level, which sets your pace while you are a hider.
+    fn food_level(&self) -> Option<f32> {
+        self.vitals.map(|v| v.food)
     }
 
     fn observe_clock(&mut self, tick: Tick, now_ms: f64) {
@@ -326,6 +356,20 @@ impl Replica {
         let seconds_left = deadline.map_or(0.0, |u| {
             ((f64::from(u.0) - self.server_ticks(now_ms)) / f64::from(TICK_HZ)).max(0.0) as f32
         });
+        let zone = self.round.as_ref().map(|_| self.zone);
+        let food = self.round.as_ref().map_or_else(Vec::new, |r| {
+            r.world
+                .food
+                .iter()
+                .take(MAX_FOOD)
+                .enumerate()
+                .filter(|(i, _)| self.food & (1u64 << i) != 0)
+                .map(|(_, f)| *f)
+                .collect()
+        });
+        let danger = matches!(self.phase, Phase::Seeking { .. })
+            && self.vitals.is_some()
+            && me.is_some_and(|m| !self.zone.contains(m.body));
         ViewState {
             you: self.you,
             host: self.host,
@@ -338,6 +382,10 @@ impl Replica {
             others,
             hiders_left,
             seconds_left,
+            zone,
+            food,
+            vitals: self.vitals,
+            danger,
         }
     }
 

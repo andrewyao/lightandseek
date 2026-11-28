@@ -26,6 +26,16 @@ pub struct Probe {
     pub hiders_left: usize,
     pub seconds_left: f32,
     pub blind: bool,
+    /// Your meters, 0 to 1, while you are a living hider.
+    pub food: Option<f32>,
+    pub water: Option<f32>,
+    /// You stand in the danger zone, and the seconds you have left there.
+    pub danger: bool,
+    pub danger_left: Option<f32>,
+    /// The safe zone's half width and ceiling.
+    pub zone: Option<[f32; 2]>,
+    /// Ripe food as `[x, y]`.
+    pub ripe_food: Vec<[f32; 2]>,
     pub gpu: String,
 }
 
@@ -59,6 +69,8 @@ pub struct World {
     pub props: usize,
     /// Each launch pad as `[x, y, height]`.
     pub pads: Vec<[f32; 3]>,
+    /// Each spring as `[x, y, radius]`.
+    pub springs: Vec<[f32; 3]>,
 }
 
 fn name(v: impl std::fmt::Debug) -> String {
@@ -87,6 +99,12 @@ pub fn probe(view: Option<&ViewState<'_>>, camera: Camera, gpu: &str) -> Probe {
         hiders_left: 0,
         seconds_left: 0.0,
         blind: false,
+        food: None,
+        water: None,
+        danger: false,
+        danger_left: None,
+        zone: None,
+        ripe_food: Vec::new(),
         gpu: gpu.into(),
     };
     let Some(v) = view else { return p };
@@ -140,7 +158,18 @@ pub fn probe(view: Option<&ViewState<'_>>, camera: Camera, gpu: &str) -> Probe {
             .iter()
             .map(|d| [d.center.x, d.center.y, d.y])
             .collect(),
+        springs: w
+            .springs
+            .iter()
+            .map(|s| [s.center.x, s.center.y, s.radius])
+            .collect(),
     });
+    p.food = v.vitals.map(|v| v.food);
+    p.water = v.vitals.map(|v| v.water);
+    p.danger = v.danger;
+    p.danger_left = v.vitals.filter(|_| v.danger).map(|v| v.danger_left());
+    p.zone = v.zone.map(|z| [z.half, z.ceiling]);
+    p.ripe_food = v.food.iter().map(|f| [f.x, f.z]).collect();
     p.hiders_left = v.hiders_left;
     p.seconds_left = v.seconds_left;
     p.blind = v.blind();
@@ -205,6 +234,18 @@ mod tests {
         assert_eq!(me["me"], true);
         assert_eq!(json["role"], me["role"]);
         assert_eq!(json["status"], "Active");
+        let world = room.world().unwrap();
+        assert_eq!(
+            json["ripe_food"].as_array().unwrap().len(),
+            world.food.len()
+        );
+        assert_eq!(
+            json["world"]["springs"].as_array().unwrap().len(),
+            world.springs.len()
+        );
+        assert_eq!(json["zone"][0], game::rules::zone(world, 0.0).half);
+        assert_eq!(json["danger"], false);
+        assert_eq!(json["food"].is_number(), me["role"] == "Hider");
 
         let none = serde_json::to_value(probe(None, Camera::Follow, "")).unwrap();
         assert_eq!(none["screen"], "Connecting");

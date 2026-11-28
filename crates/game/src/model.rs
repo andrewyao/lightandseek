@@ -36,11 +36,20 @@ pub enum Role {
     Hider,
 }
 
-/// `Caught` hiders spectate until the round ends.
+/// `Caught` and `Died` hiders spectate until the round ends.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Status {
     Active,
     Caught,
+    Died(Cause),
+}
+
+/// What killed a hider who was not caught.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Cause {
+    Thirst,
+    /// Stayed in the danger zone too long.
+    Zone,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

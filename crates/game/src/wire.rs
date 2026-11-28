@@ -10,10 +10,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{AvatarState, Input, LobbyConfig, Member, Phase, PlayerId, Refusal, Role, Tick};
+use crate::model::{
+    AvatarState, Cause, Input, LobbyConfig, Member, Phase, PlayerId, Refusal, Role, Tick,
+};
+use crate::rules::{Vitals, Zone};
 use crate::world::World;
 
-pub(crate) const VERSION: u8 = 2;
+pub(crate) const VERSION: u8 = 3;
 
 /// One WebSocket binary message. Opaque to shells.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,12 +73,16 @@ pub(crate) enum ServerMsg {
     },
     /// Every tick during a round. Filtered per recipient: while hiding, the
     /// seeker gets no hiders. `ack` is the last `Input::tick` consumed for the
-    /// recipient's avatar.
+    /// recipient's avatar. `food` has bit `i` set while `World::food[i]` is
+    /// ripe. `vitals` are the recipient's own, while it is a living hider.
     Snapshot {
         tick: Tick,
         phase: Phase,
         ack: Tick,
         avatars: Vec<AvatarState>,
+        zone: Zone,
+        food: u64,
+        vitals: Option<Vitals>,
     },
     Caught {
         hider: PlayerId,
@@ -89,6 +96,10 @@ pub(crate) enum ServerMsg {
     /// closes. Its
     /// client must not resume that player again.
     Replaced,
+    Died {
+        hider: PlayerId,
+        cause: Cause,
+    },
 }
 
 pub(crate) fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
@@ -170,7 +181,7 @@ mod tests {
         };
         assert!(back.jump, "the jump survives");
 
-        let snapshot = |y: f32, vy: f32| ServerMsg::Snapshot {
+        let snapshot_with = |y: f32, vy: f32, water: f32| ServerMsg::Snapshot {
             tick: Tick(1),
             phase: crate::model::Phase::Lobby,
             ack: Tick(0),
@@ -184,7 +195,31 @@ mod tests {
                 role: Role::Hider,
                 status: crate::model::Status::Active,
             }],
+            zone: Zone {
+                half: 20.0,
+                ceiling: 5.0,
+            },
+            food: 0b101,
+            vitals: Some(Vitals {
+                food: 0.25,
+                water,
+                danger: 3,
+            }),
         };
+        let snapshot = |y: f32, vy: f32| snapshot_with(y, vy, 0.5);
+        let Ok(ServerMsg::Snapshot {
+            zone, food, vitals, ..
+        }) = decode::<ServerMsg>(&encode(&snapshot(0.0, 0.0)))
+        else {
+            panic!("a snapshot decodes");
+        };
+        assert_eq!((zone.ceiling, food), (5.0, 0b101));
+        assert_eq!(vitals.map(|v| (v.food, v.danger)), Some((0.25, 3)));
+        assert_eq!(
+            decode::<ServerMsg>(&encode(&snapshot_with(0.0, 0.0, f32::NAN))).err(),
+            Some(WireError::Malformed),
+            "non-finite water"
+        );
         assert!(decode::<ServerMsg>(&encode(&snapshot(2.0, -3.0))).is_ok());
         for (y, vy) in [(f32::NAN, 0.0), (0.0, f32::INFINITY)] {
             assert_eq!(
@@ -226,9 +261,9 @@ mod tests {
         });
         let mut bytes = encode(&world);
         assert_eq!(decode::<World>(&bytes), Ok(world));
-        // The prop's material is the last byte before the empty spawn and pad
-        // lists.
-        let at = bytes.len() - 3;
+        // The prop's material is the last byte before the empty spawn, pad,
+        // spring, and food lists and the 4-byte ceiling.
+        let at = bytes.len() - 9;
         assert_eq!(bytes[at], Material::Water as u8);
         bytes[at] = 200;
         assert_eq!(decode::<World>(&bytes).err(), Some(WireError::Malformed));

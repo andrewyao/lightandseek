@@ -294,6 +294,43 @@ impl NavGrid {
     }
 }
 
+/// Up to `k` of `cells`, each the one farthest from all chosen before it and
+/// from `taken`. Starts from a random cell when `taken` is empty.
+pub(crate) fn spread(rng: &mut Rng, cells: &[Vec2], k: usize, taken: &[Vec2]) -> Vec<Vec2> {
+    if cells.is_empty() {
+        return Vec::new();
+    }
+    let mut gap: Vec<f32> = cells
+        .iter()
+        .map(|c| {
+            taken
+                .iter()
+                .map(|t| c.distance(*t))
+                .fold(f32::INFINITY, f32::min)
+        })
+        .collect();
+    let farthest = |gap: &[f32]| {
+        (0..gap.len())
+            .max_by(|&a, &b| gap[a].total_cmp(&gap[b]))
+            .expect("cells is not empty")
+    };
+    let mut next = if taken.is_empty() {
+        rng.below(cells.len())
+    } else {
+        farthest(&gap)
+    };
+    let mut out = Vec::with_capacity(k);
+    while out.len() < k.min(cells.len()) {
+        let p = cells[next];
+        out.push(p);
+        for (g, c) in gap.iter_mut().zip(cells) {
+            *g = g.min(c.distance(p));
+        }
+        next = farthest(&gap);
+    }
+    out
+}
+
 fn center_of(min: Vec2, n: usize, i: usize) -> Vec2 {
     Vec2::new(
         min.x + ((i % n) as f32 + 0.5) * CELL,

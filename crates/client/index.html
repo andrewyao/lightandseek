@@ -39,6 +39,18 @@
       .blind p { margin: 4px; }
       .blind .note { font-size: 14px; font-weight: 400; }
       .hud { z-index: 1; }
+      .meters { position: absolute; top: 56px; left: 12px; display: flex; flex-direction: column; gap: 6px; background: rgba(14, 18, 24, 0.78); padding: 8px 12px; border-radius: 10px; z-index: 1; }
+      .meter { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+      .meter .label { width: 40px; }
+      .meter .track { width: 120px; height: 8px; background: rgba(255, 255, 255, 0.15); border-radius: 4px; overflow: hidden; }
+      .meter .fill { display: block; height: 100%; transition: width 0.2s linear; }
+      .meter.food .fill { background: #f39c2e; }
+      .meter.water .fill { background: #3fa3e8; }
+      .meter.low .label { color: #ff6b5e; font-weight: 700; }
+      .danger { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, rgba(220, 20, 20, 0.12) 40%, rgba(220, 20, 20, 0.55) 100%); display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 18vh; font-size: 30px; font-weight: 700; color: #fff; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7); animation: danger-pulse 1s ease-in-out infinite alternate; }
+      .danger p { margin: 4px; }
+      .danger .note { font-size: 15px; font-weight: 400; }
+      @keyframes danger-pulse { from { background-color: rgba(220, 20, 20, 0.12); } to { background-color: rgba(220, 20, 20, 0.28); } }
       .app { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
       .touch-only { display: none; }
       @media (pointer: coarse) {

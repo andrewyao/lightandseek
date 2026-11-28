@@ -7,7 +7,7 @@ use engine::{
     Environment, FollowCamera, Instance, Material, SceneDraw, Shape, View, Wedge, avatar_instances,
 };
 use game::rules::{CATCH_DIST, CATCH_HALF_ANGLE};
-use game::{AvatarView, Body, PlayerId, Role, SceneKind, Status, Vec2, ViewState, World};
+use game::{AvatarView, Body, PlayerId, Role, SceneKind, Status, Vec2, ViewState, World, Zone};
 use glam::Vec3;
 
 use crate::gait::Gaits;
@@ -15,6 +15,11 @@ use crate::gait::Gaits;
 pub const SEEKER: [f32; 3] = [0.9, 0.16, 0.12];
 const WEDGE: [f32; 4] = [0.95, 0.05, 0.05, 0.8];
 const PAD: [f32; 3] = [0.25, 0.95, 1.0];
+const FOOD: [f32; 3] = [1.0, 0.62, 0.18];
+const FOOD_SIZE: f32 = 0.35;
+const DANGER: [f32; 3] = [1.0, 0.12, 0.1];
+/// The zone's edge is drawn as glowing strips this wide.
+const EDGE_WIDTH: f32 = 0.15;
 /// Rings rise off each pad, this many at once, each over this long.
 const PAD_RINGS: usize = 3;
 const RING_MS: f64 = 1200.0;
@@ -105,6 +110,36 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Adds ripe `food` and the edge of `zone`: red strips on the ground
+    /// along its sides and a red frame at its ceiling.
+    pub fn with_supplies(mut self, zone: Option<Zone>, food: &[game::Vec3]) -> Scene {
+        for f in food {
+            let at = Vec3::new(f.x, f.y + FOOD_SIZE / 2.0, f.z);
+            self.instances.push(
+                Instance::new(Shape::Box, at, Vec3::splat(FOOD_SIZE), 0.6, FOOD)
+                    .with_material(Material::Glow),
+            );
+        }
+        let Some(z) = zone.filter(|z| z.half < Zone::EVERYWHERE.half) else {
+            return self;
+        };
+        let (h, w) = (z.half, EDGE_WIDTH);
+        for y in [0.03, z.ceiling] {
+            for (center, size) in [
+                (Vec3::new(0.0, y, h), Vec3::new(2.0 * h, w, w)),
+                (Vec3::new(0.0, y, -h), Vec3::new(2.0 * h, w, w)),
+                (Vec3::new(h, y, 0.0), Vec3::new(w, w, 2.0 * h)),
+                (Vec3::new(-h, y, 0.0), Vec3::new(w, w, 2.0 * h)),
+            ] {
+                self.instances.push(
+                    Instance::new(Shape::Box, center, size, 0.0, DANGER)
+                        .with_material(Material::Glow),
+                );
+            }
+        }
+        self
+    }
+
     pub fn draw(&self) -> SceneDraw<'_> {
         SceneDraw {
             instances: &self.instances,
@@ -383,6 +418,36 @@ mod tests {
         assert_ne!(
             color(PlayerId(1), Role::Hider),
             color(PlayerId(2), Role::Hider)
+        );
+    }
+
+    #[test]
+    fn ripe_food_glows_and_the_zone_edge_is_drawn_on_the_ground_and_at_its_ceiling() {
+        let world = World::open(SceneKind::Park);
+        let base = scene(&world, &[], None, &Gaits::default());
+        let food = [game::Vec3::new(3.0, 0.0, -2.0)];
+        let zone = Zone {
+            half: 15.0,
+            ceiling: 6.0,
+        };
+        let s = base.clone().with_supplies(Some(zone), &food);
+        let added = &s.instances[base.instances.len()..];
+        assert_eq!(added.len(), 1 + 8, "one food, four strips twice");
+        assert!((centre(&added[0]) - Vec3::new(3.0, FOOD_SIZE / 2.0, -2.0)).length() < 1e-4);
+        assert!(added.iter().all(|i| i.material == Material::Glow));
+        let heights: Vec<f32> = added[1..].iter().map(|i| centre(i).y).collect();
+        assert!(heights.contains(&6.0) && heights.contains(&0.03));
+        assert!(
+            added[1..]
+                .iter()
+                .all(|i| centre(i).x.abs().max(centre(i).z.abs()) == 15.0)
+        );
+
+        let lobby = base.clone().with_supplies(Some(Zone::EVERYWHERE), &[]);
+        assert_eq!(
+            lobby.instances.len(),
+            base.instances.len(),
+            "no edge to draw"
         );
     }
 

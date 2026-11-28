@@ -1,8 +1,11 @@
 //! What the chrome shows, as plain values derived from a `ViewState`: the
 //! screen, the camera mode, the HUD, and the lobby rules.
 
-use game::rules::{MAX_BOTS, MAX_HUMANS};
-use game::{Control, Link, LobbyConfig, Member, Phase, PlayerId, Refusal, Role, Status, ViewState};
+use game::rules::{HUNGRY, MAX_BOTS, MAX_HUMANS};
+use game::{
+    AvatarView, Cause, Control, Link, LobbyConfig, Member, Phase, PlayerId, Refusal, Role, Status,
+    ViewState,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -88,11 +91,47 @@ pub struct Hud {
     pub blind: bool,
     /// Whom a spectator is watching.
     pub watching: Option<String>,
+    /// Your food and water in whole percent, while you are a living hider.
+    pub meters: Option<Meters>,
+    /// Whole seconds before the danger zone kills you, while you stand in it.
+    pub danger: Option<u32>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Meters {
+    pub food: u8,
+    pub water: u8,
+    /// Low food slows you.
+    pub hungry: bool,
+    pub thirsty: bool,
+}
+
+/// Below this share of water the meter warns.
+const THIRSTY: f32 = 0.3;
+
+fn percent(v: f32) -> u8 {
+    (v.clamp(0.0, 1.0) * 100.0).ceil() as u8
+}
+
+/// The toast when `name` dies of `cause`.
+pub fn death(name: &str, cause: Cause) -> String {
+    match cause {
+        Cause::Thirst => format!("{name} died of thirst"),
+        Cause::Zone => format!("{name} was lost to the danger zone"),
+    }
 }
 
 pub fn hud(view: &ViewState<'_>, camera: Camera) -> Hud {
     let role = match view.me {
         Some(m) if m.status == Status::Caught => "Caught, spectating".into(),
+        Some(AvatarView {
+            status: Status::Died(Cause::Thirst),
+            ..
+        }) => "Died of thirst, spectating".into(),
+        Some(AvatarView {
+            status: Status::Died(Cause::Zone),
+            ..
+        }) => "Lost to the zone, spectating".into(),
         Some(m) if m.role == Role::Seeker => "Seeker".into(),
         Some(_) => "Hider".into(),
         None => "Spectating".into(),
@@ -114,6 +153,15 @@ pub fn hud(view: &ViewState<'_>, camera: Camera) -> Hud {
         hiders_left: (!view.blind()).then_some(view.hiders_left),
         blind: view.blind(),
         watching,
+        meters: view.vitals.map(|v| Meters {
+            food: percent(v.food),
+            water: percent(v.water),
+            hungry: v.food < HUNGRY,
+            thirsty: v.water < THIRSTY,
+        }),
+        danger: view
+            .danger
+            .then(|| view.vitals.map_or(0.0, |v| v.danger_left()).ceil() as u32),
     }
 }
 
@@ -264,6 +312,10 @@ mod tests {
             others,
             hiders_left: 2,
             seconds_left: 2.2,
+            zone: None,
+            food: Vec::new(),
+            vitals: None,
+            danger: false,
         }
     }
 
@@ -363,6 +415,43 @@ mod tests {
         assert_eq!(h.role, "Caught, spectating");
         assert_eq!(h.watching.as_deref(), Some("p2"));
         assert!(!h.blind);
+    }
+
+    #[test]
+    fn a_living_hider_sees_its_meters_and_a_danger_countdown() {
+        let roster = [member(2, Control::Bot, Link::Online)];
+        let me = avatar(1, Role::Hider, Status::Active);
+        let mut v = view(&roster, SEEKING, Some(me), Vec::new());
+        v.vitals = Some(game::Vitals {
+            food: 0.2,
+            water: 0.505,
+            danger: 0,
+        });
+        let h = hud(&v, Camera::Follow);
+        assert_eq!(
+            h.meters,
+            Some(Meters {
+                food: 20,
+                water: 51,
+                hungry: true,
+                thirsty: false,
+            })
+        );
+        assert_eq!(h.danger, None, "safe");
+
+        v.danger = true;
+        v.vitals = v.vitals.map(|x| game::Vitals { danger: 70, ..x });
+        assert_eq!(hud(&v, Camera::Follow).danger, Some(7), "6.5 s rounds up");
+
+        let mut v = view(&roster, SEEKING, Some(me), Vec::new());
+        v.me = Some(AvatarView {
+            status: Status::Died(Cause::Zone),
+            ..me
+        });
+        let h = hud(&v, Camera::Follow);
+        assert_eq!(h.role, "Lost to the zone, spectating");
+        assert_eq!((h.meters, h.danger), (None, None));
+        assert_eq!(death("Ada", Cause::Thirst), "Ada died of thirst");
     }
 
     #[test]

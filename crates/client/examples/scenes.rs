@@ -40,7 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
             })
             .collect();
-        let scene = draw::scene(&world, &avatars, None, &gaits);
+        let zone = game::rules::zone(&world, 0.7);
+        let scene =
+            draw::scene(&world, &avatars, None, &gaits).with_supplies(Some(zone), &world.food);
 
         let mut top = OrbitCamera::new(Vec3::ZERO);
         top.pitch = 1.4;

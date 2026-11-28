@@ -228,3 +228,67 @@ fn others_render_interpolated_and_the_hud_counts_hiders() {
         assert!(half.distance(mid) < 1e-3, "half a tick later is halfway");
     }
 }
+
+#[test]
+fn a_hider_sees_its_meters_the_food_and_the_danger_zone_closing_in() {
+    for seed in 0..80 {
+        let mut link = Link::new(1, 1);
+        link.connect();
+        for _ in 0..3 {
+            link.tick();
+        }
+        let config = LobbyConfig {
+            humans: 1,
+            bots: 1,
+            scene: Some(SceneKind::Park),
+            seed: Some(seed),
+            hide_secs: 1,
+            seek_secs: 20,
+        };
+        link.send(Replica::configure(config).as_bytes().to_vec());
+        link.send(Replica::start().as_bytes().to_vec());
+        for _ in 0..30 {
+            link.tick();
+        }
+        let me = link.client().you();
+        let at = |link: &Link| f64::from(link.now) * TICK_MS;
+        let now = at(&link);
+        let view = link.client().view(now);
+        let spawn = view.me.map(|m| m.body.pos);
+        let edge = spawn.is_some_and(|p| p.x.abs().max(p.y.abs()) > 17.0);
+        if view.seeker == Some(me) || !edge {
+            continue;
+        }
+        assert!(matches!(view.phase, Phase::Seeking { .. }));
+        assert!(!view.danger, "the zone starts whole");
+        let world = view.world.expect("a round");
+        assert_eq!(view.food.len(), world.food.len(), "all food starts ripe");
+        let vitals = view.vitals.expect("a hider has meters");
+        assert!(vitals.water < 1.0 && vitals.water > 0.9, "{vitals:?}");
+        let start = view.zone.expect("a zone").half;
+
+        loop {
+            let now = at(&link);
+            if !matches!(link.client().view(now).phase, Phase::Seeking { .. }) {
+                break;
+            }
+            let frame = link.client().input(Vec2::ZERO, 0.0, false);
+            if let Some(frame) = frame {
+                link.send(frame.as_bytes().to_vec());
+            }
+            link.tick();
+            let now = at(&link);
+            let view = link.client().view(now);
+            if view.seconds_left < 1.0 && matches!(view.phase, Phase::Seeking { .. }) {
+                if view.me.is_none_or(|m| m.status != game::Status::Active) {
+                    break;
+                }
+                assert!(view.zone.unwrap().half < start, "shrunk");
+                assert!(view.danger, "seed {seed}: an edge hider is in danger");
+                assert!(view.vitals.unwrap().danger > 0, "the server counts it");
+                return;
+            }
+        }
+    }
+    panic!("no seed put a live human hider on the edge at the end");
+}

@@ -520,6 +520,37 @@ fn HudPanel(sv: Sv, ui: Ui) -> impl IntoView {
                                 })}
                         </div>
                         {h
+                            .meters
+                            .map(|m| {
+                                let bar = |v: u8| format!("width: {v}%");
+                                view! {
+                                    <div class="meters" data-testid="meters">
+                                        <div class="meter food" class:low=m.hungry>
+                                            <span class="label">"Food"</span>
+                                            <span class="track">
+                                                <span class="fill" style=bar(m.food)></span>
+                                            </span>
+                                        </div>
+                                        <div class="meter water" class:low=m.thirsty>
+                                            <span class="label">"Water"</span>
+                                            <span class="track">
+                                                <span class="fill" style=bar(m.water)></span>
+                                            </span>
+                                        </div>
+                                    </div>
+                                }
+                            })}
+                        {h
+                            .danger
+                            .map(|secs| {
+                                view! {
+                                    <div class="danger" data-testid="danger">
+                                        <p>{format!("Danger zone · {secs}")}</p>
+                                        <p class="note">"Get back inside the red lines."</p>
+                                    </div>
+                                }
+                            })}
+                        {h
                             .watching
                             .clone()
                             .map(|name| {
